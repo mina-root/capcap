@@ -13,14 +13,32 @@
     "windows": [
       {
         "title": "GameCapReaction",
+        "label": "main",
         "width": 600,
         "height": 140,
         "resizable": false,
+        "maximizable": false,
         "fullscreen": false,
         "transparent": true,
         "decorations": false,
         "shadow": false,
         "alwaysOnTop": true
+      },
+      {
+        "title": "Window Select",
+        "label": "window-select",
+        "width": 540,
+        "height": 360,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "url": "/?window=select"
       }
     ],
     "security": {

@@ -8,6 +8,19 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
-    "core:window:allow-close"
+    "core:window:allow-close",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-outer-position",
+    "core:window:allow-inner-size",
+    "core:window:allow-current-monitor",
+    "core:window:allow-available-monitors",
+    "core:window:allow-set-resizable",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-get-all-windows",
+    "core:window:allow-set-focus",
+    "core:event:allow-listen",
+    "core:event:allow-emit"
   ]
 }
