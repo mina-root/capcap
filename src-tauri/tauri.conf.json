@@ -14,8 +14,8 @@
       {
         "title": "GameCapReaction",
         "label": "main",
-        "width": 600,
-        "height": 140,
+        "width": 310,
+        "height": 70,
         "resizable": false,
         "maximizable": false,
         "fullscreen": false,

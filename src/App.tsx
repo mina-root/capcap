@@ -16,6 +16,32 @@ function MainApp() {
   const [isWindowMenuOpen, setIsWindowMenuOpen] = useState(false);
   const [selectedWindow, setSelectedWindow] = useState<WindowInfo | null>(null);
 
+  const followPosition = async () => {
+    if (!isWindowMenuOpen) return;
+    const popupWin = (await getAllWindows()).find(w => w.label === 'window-select');
+    if (popupWin) {
+      const win = getCurrentWindow();
+      const pos = await win.outerPosition();
+      const monitor = await currentMonitor();
+      const sf = monitor ? monitor.scaleFactor : 1;
+      const logicalY = pos.y / sf;
+      const logicalX = pos.x / sf;
+
+      let direction: 'up' | 'down' = 'up';
+      if (monitor && pos.y < monitor.size.height / 2) direction = 'down';
+
+      const popupWidth = 540;
+      const mainWidth = 310;
+      const offsetX = (mainWidth - popupWidth) / 2;
+
+      if (direction === 'up') {
+        await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - 360));
+      } else {
+        await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
+      }
+    }
+  };
+
   useEffect(() => {
     const unlisten = listen<WindowInfo>('window-selected', (event) => {
       setSelectedWindow(event.payload);
@@ -26,29 +52,7 @@ function MainApp() {
       setIsWindowMenuOpen(false);
     });
 
-    // Follow main window position
-    const unlistenMove = getCurrentWindow().onMoved(async () => {
-      if (!isWindowMenuOpen) return;
-      const popupWin = (await getAllWindows()).find(w => w.label === 'window-select');
-      if (popupWin) {
-        const win = getCurrentWindow();
-        const pos = await win.outerPosition();
-        const monitor = await currentMonitor();
-        const sf = monitor ? monitor.scaleFactor : 1;
-        const logicalY = pos.y / sf;
-        const logicalX = pos.x / sf;
-
-        // Get current direction (could be kept in state, but simpler to recalculate)
-        let direction: 'up' | 'down' = 'up';
-        if (monitor && pos.y < monitor.size.height / 2) direction = 'down';
-
-        if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + 30, logicalY - 360));
-        } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + 30, logicalY + 140));
-        }
-      }
-    });
+    const unlistenMove = getCurrentWindow().onMoved(followPosition);
 
     return () => {
       unlisten.then(f => f());
@@ -61,14 +65,9 @@ function MainApp() {
     try {
       const allWindows = await getAllWindows();
       const currentLabel = getCurrentWindow().label;
-
-      // Close all other windows first
       for (const w of allWindows) {
-        if (w.label !== currentLabel) {
-          await w.close();
-        }
+        if (w.label !== currentLabel) await w.close();
       }
-      // Finally close this main window
       await getCurrentWindow().close();
     } catch (error) {
       console.error("Failed to close window:", error);
@@ -82,11 +81,9 @@ function MainApp() {
       if (!popupWin) return;
 
       if (!isWindowMenuOpen) {
-        // Compute position to show popup
         const monitor = await currentMonitor();
         const pos = await win.outerPosition();
         const sf = monitor ? monitor.scaleFactor : 1;
-
         const logicalY = pos.y / sf;
         const logicalX = pos.x / sf;
 
@@ -95,14 +92,16 @@ function MainApp() {
           if (pos.y < monitor.size.height / 2) direction = 'down';
         }
 
-        // Send direction event so popup knows to animate from top or bottom
         await emit('window-select-direction', direction);
 
-        // Position popup window relative to main window
+        const popupWidth = 540;
+        const mainWidth = 310;
+        const offsetX = (mainWidth - popupWidth) / 2;
+
         if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + 30, logicalY - 360));
+          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - 360));
         } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + 30, logicalY + 140));
+          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
         }
 
         await popupWin.show();
@@ -130,12 +129,10 @@ function MainApp() {
             if (e.button === 0) getCurrentWindow().startDragging();
           }}>
             <GripHorizontal />
-            <span>Move</span>
           </div>
 
           <div className="dock-item" title="Projects">
             <FolderKanban />
-            <span>Projects</span>
           </div>
 
           <div className="dock-item" title="Select Target Window" onClick={toggleWindowMenu} style={{
@@ -143,22 +140,18 @@ function MainApp() {
             color: selectedWindow && selectedWindow.hwnd !== 0 ? '#60a5fa' : 'inherit'
           }}>
             <Maximize />
-            <span>{selectedWindow && selectedWindow.hwnd !== 0 ? 'FIXED' : 'Window'}</span>
           </div>
 
           <div className="dock-item" title="Capture Screenshot (Ctrl+Shift+S)">
             <ImageIcon color="#4ade80" />
-            <span>Capture</span>
           </div>
 
           <div className="dock-item" title="Settings">
             <Settings />
-            <span>Settings</span>
           </div>
 
           <div className="dock-item" title="Close App" onClick={handleClose}>
             <X color="#f87171" />
-            <span>Close</span>
           </div>
         </div>
       </div>
@@ -210,27 +203,28 @@ function WindowSelectPopup() {
     <div style={{ width: '100%', height: '100%', padding: '10px' }}>
       <div className={`liquidGlass-wrapper window-popup ${direction}`}>
         <div className="liquidGlass-effect"></div>
-        <div className="liquidGlass-tint" style={{ background: 'rgba(20, 20, 20, 0.4)' }}></div>
+        <div className="liquidGlass-tint"></div>
         <div className="liquidGlass-shine"></div>
 
         <div className="liquidGlass-text" style={{ display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 3, position: 'relative', width: '100%', height: '100%' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', padding: '0 4px' }}>
-            <span style={{ fontSize: '0.9rem', fontWeight: 500, opacity: 0.8 }}>Select Target Window</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px 8px 4px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+            <span style={{ fontSize: '0.9rem', fontWeight: 600, opacity: 0.9 }}>Capture Target</span>
             <div
-              style={{ cursor: 'pointer', padding: '4px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)' }}
+              style={{ cursor: 'pointer', padding: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', transition: 'transform 0.2s' }}
               onClick={() => fetchWindows()}
+              onMouseEnter={(e) => e.currentTarget.style.transform = 'rotate(180deg)'}
+              onMouseLeave={(e) => e.currentTarget.style.transform = 'rotate(0deg)'}
             >
               <RefreshCw size={14} />
             </div>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', paddingRight: '4px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '6px' }} className="window-list-scroll">
             <div
-              className="window-item"
-              style={{ borderColor: selectedWindow === null ? '#4ade80' : 'rgba(255,255,255,0.1)' }}
+              className={`window-item ${selectedWindow === null || selectedWindow?.hwnd === 0 ? 'selected' : ''}`}
               onClick={() => handleSelectWindow({ hwnd: 0, title: 'Auto (Active Window)' })}
             >
-              <span className="window-item-title" style={{ fontWeight: selectedWindow === null || selectedWindow?.hwnd === 0 ? 'bold' : 'normal' }}>
+              <span className="window-item-title">
                 Auto (Current Active Window)
               </span>
             </div>
@@ -238,8 +232,7 @@ function WindowSelectPopup() {
             {windows.map(w => (
               <div
                 key={w.hwnd}
-                className="window-item"
-                style={{ borderColor: selectedWindow?.hwnd === w.hwnd ? '#3b82f6' : 'rgba(255,255,255,0.1)' }}
+                className={`window-item ${selectedWindow?.hwnd === w.hwnd ? 'selected' : ''}`}
                 onClick={() => handleSelectWindow(w)}
               >
                 <span className="window-item-title" title={w.title}>{w.title}</span>

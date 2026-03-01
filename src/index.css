@@ -39,25 +39,23 @@ body {
   display: flex;
   font-weight: 600;
   overflow: hidden;
-
   color: white;
-
-  box-shadow: 0 6px 6px rgba(0, 0, 0, 0.2), 0 0 20px rgba(0, 0, 0, 0.1);
-
+  /* Softened the black inset (0.4 -> 0.15) and brightened the white highlight */
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), inset 0 2px 8px rgba(0, 0, 0, 0.15);
   transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 2.2);
-  border-radius: 2rem;
-  padding: 0.6rem;
+  border-radius: 1.5rem;
+  padding: 0;
 }
 
 .liquidGlass-effect {
   position: absolute;
   z-index: 0;
   inset: 0;
-
-  backdrop-filter: blur(6px);
-  filter: url(#glass-distortion);
-  overflow: hidden;
-  isolation: isolate;
+  /* Reduced base opacity (0.4 -> 0.2) and added brightness(1.1) to avoid dark mud on white backgrounds */
+  backdrop-filter: blur(28px) saturate(160%) brightness(1.1);
+  background-color: rgba(25, 25, 25, 0.2);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' opacity='0.05' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  mix-blend-mode: normal;
   border-radius: inherit;
 }
 
@@ -65,23 +63,36 @@ body {
   z-index: 1;
   position: absolute;
   inset: 0;
-  background: rgba(30, 30, 30, 0.35);
-  /* Dark dock tint */
+  /* Increased white overlay opactiy (0.12 -> 0.18) to pop more on white backgrounds */
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.0) 100%);
+  mix-blend-mode: overlay;
+  /* Reacts to background colors */
   border-radius: inherit;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.08);
+  /* inner glow */
 }
 
 .liquidGlass-shine {
   position: absolute;
   inset: 0;
   z-index: 2;
-
   overflow: hidden;
-
-  box-shadow: inset 2px 2px 2px 0 rgba(255, 255, 255, 0.15),
-    inset -1px -1px 2px 0 rgba(255, 255, 255, 0.05);
   border-radius: inherit;
   pointer-events: none;
+}
+
+.liquidGlass-shine::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.5);
+  border-right: 1.5px solid rgba(255, 255, 255, 0.5);
+  mask-image: radial-gradient(circle at top right, black, transparent 70%);
+  mix-blend-mode: color-dodge;
+  /* Highlights reactive to background */
+  filter: blur(0.3px);
 }
 
 .liquidGlass-text {
@@ -93,32 +104,25 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  border-radius: 2rem;
-  padding: 0.6rem;
+  gap: 4px;
+  border-radius: 1.5rem;
+  padding: 4px;
 }
 
 .dock-item {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 10px 16px;
-  border-radius: 1.2rem;
+  padding: 10px;
+  border-radius: 1rem;
   color: rgba(255, 255, 255, 0.85);
-  font-size: 0.75rem;
   transition: all 0.2s ease-in-out;
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
 
-.dock-item[data-tauri-drag-region] {
-  cursor: grab;
-}
-
-.dock-item[data-tauri-drag-region]:active {
-  cursor: grabbing;
+.dock-item span {
+  display: none;
 }
 
 .dock-item:hover {
@@ -133,10 +137,11 @@ body {
 }
 
 .dock-item svg {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   stroke-width: 1.5;
   transition: all 0.2s ease;
+  filter: drop-shadow(1px 2px 1.4px rgba(0, 0, 0, 0.4));
 }
 
 .dock-item:hover svg {
@@ -152,6 +157,7 @@ body {
   flex-direction: column;
   gap: 8px;
   overflow-y: hidden;
+  box-shadow: inset 0 2px 15px rgba(0, 0, 0, 0.25);
   animation: popup-fade-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.2);
 }
 
@@ -178,23 +184,52 @@ body {
 .window-item {
   display: flex;
   align-items: center;
-  padding: 12px;
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 10px 14px;
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .window-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateX(3px);
+}
+
+.window-item.selected {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.1);
+}
+
+.window-item.selected .window-item-title {
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+.window-list-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.window-list-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.window-list-scroll::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
-  transform: translateX(4px);
+  border-radius: 10px;
+}
+
+.window-list-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .window-item-title {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: white;
+  color: rgba(255, 255, 255, 0.9);
 }
