@@ -4,7 +4,8 @@
   "description": "enables the default permissions",
   "windows": [
     "main",
-    "window-select"
+    "window-select",
+    "project-menu"
   ],
   "permissions": [
     "core:default",

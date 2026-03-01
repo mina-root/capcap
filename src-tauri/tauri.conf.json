@@ -39,6 +39,22 @@
         "visible": false,
         "skipTaskbar": true,
         "url": "/?window=select"
+      },
+      {
+        "title": "Project Menu",
+        "label": "project-menu",
+        "width": 600,
+        "height": 400,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "url": "/?window=projects"
       }
     ],
     "security": {

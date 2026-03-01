@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::command;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
@@ -233,6 +233,99 @@ fn capture_window(hwnd: isize, save_dir: String) -> Result<String, String> {
     }
 }
 
+// ─── Project Management ────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProjectInfo {
+    pub id: String,
+    pub name: String,
+    pub text: String,
+    pub created_at: u64,
+    pub dir_path: String,
+}
+
+#[command]
+fn list_projects(app_data_dir: String) -> Vec<ProjectInfo> {
+    let mut projects = Vec::new();
+    let projects_dir = PathBuf::from(&app_data_dir).join("projects");
+
+    if !projects_dir.exists() {
+        return projects;
+    }
+
+    if let Ok(entries) = std::fs::read_dir(projects_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let json_path = path.join("project.json");
+                if json_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&json_path) {
+                        if let Ok(mut info) = serde_json::from_str::<ProjectInfo>(&content) {
+                            // dir_path が古い環境や移動によってずれても良いように動的に設定し直す
+                            info.dir_path = path.to_string_lossy().into_owned();
+                            projects.push(info);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 作成日時で新しい順にソート
+    projects.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    projects
+}
+
+#[command]
+fn create_project(app_data_dir: String, name: String, text: String) -> Result<ProjectInfo, String> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+        
+    let id = format!("proj_{}", timestamp);
+    
+    let projects_dir = PathBuf::from(&app_data_dir).join("projects");
+    let target_dir = projects_dir.join(&id);
+    let captures_dir = target_dir.join("captures");
+    
+    // ディレクトリ作成
+    std::fs::create_dir_all(&captures_dir).map_err(|e| format!("ディレクトリ作成に失敗しました: {}", e))?;
+    
+    let info = ProjectInfo {
+        id,
+        name,
+        text,
+        created_at: timestamp,
+        dir_path: target_dir.to_string_lossy().into_owned(),
+    };
+    
+    // JSON保存
+    let json_path = target_dir.join("project.json");
+    let json_content = serde_json::to_string_pretty(&info).map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
+    std::fs::write(json_path, json_content).map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
+    
+    Ok(info)
+}
+
+#[command]
+fn update_project_text(project_dir: String, text: String) -> Result<(), String> {
+    let path = PathBuf::from(&project_dir).join("project.json");
+    if !path.exists() {
+        return Err("プロジェクトファイルが見つかりません".to_string());
+    }
+    
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("ファイル読み込みに失敗しました: {}", e))?;
+    let mut info: ProjectInfo = serde_json::from_str(&content).map_err(|e| format!("JSONのパースに失敗しました: {}", e))?;
+    
+    info.text = text;
+    
+    let json_content = serde_json::to_string_pretty(&info).map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
+    std::fs::write(&path, json_content).map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
+    
+    Ok(())
+}
+
 // ─── App entry ───────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -250,7 +343,13 @@ pub fn run() {
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![list_windows, capture_window])
+        .invoke_handler(tauri::generate_handler![
+            list_windows,
+            capture_window,
+            list_projects,
+            create_project,
+            update_project_text
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
