@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
-import { FolderKanban, GripHorizontal, Image as ImageIcon, Maximize, Settings, X, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { FolderKanban, GripHorizontal, Image as ImageIcon, Maximize, Settings, X, RefreshCw, Camera } from 'lucide-react';
 import { getCurrentWindow, currentMonitor, getAllWindows } from '@tauri-apps/api/window';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, emit } from '@tauri-apps/api/event';
+import { listen, emit, emitTo } from '@tauri-apps/api/event';
+import { appDataDir } from '@tauri-apps/api/path';
 import './index.css';
 
 interface WindowInfo {
@@ -11,10 +12,14 @@ interface WindowInfo {
   title: string;
 }
 
-// --- MAIN DOCK ---
+// ─── MAIN DOCK ───────────────────────────────────────────────────────────────
 function MainApp() {
   const [isWindowMenuOpen, setIsWindowMenuOpen] = useState(false);
   const [selectedWindow, setSelectedWindow] = useState<WindowInfo | null>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [lastCapturePath, setLastCapturePath] = useState<string | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const feedbackTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const followPosition = async () => {
     if (!isWindowMenuOpen) return;
@@ -43,23 +48,44 @@ function MainApp() {
   };
 
   useEffect(() => {
-    const unlisten = listen<WindowInfo>('window-selected', (event) => {
-      setSelectedWindow(event.payload);
-      setIsWindowMenuOpen(false);
-    });
+    // コンポーネントマウント時に一度だけリスナーを登録
+    const setupListeners = async () => {
+      const unlistenSelected = await listen<WindowInfo>('window-selected', (event) => {
+        console.log('MainApp: Received window-selected event', event.payload);
+        setSelectedWindow(event.payload);
+        setIsWindowMenuOpen(false);
+      });
 
-    const unlistenClose = listen('window-select-closed', () => {
-      setIsWindowMenuOpen(false);
-    });
+      const unlistenClose = await listen('window-select-closed', () => {
+        setIsWindowMenuOpen(false);
+      });
 
-    const unlistenMove = getCurrentWindow().onMoved(followPosition);
+      const unlistenMove = await getCurrentWindow().onMoved(followPosition);
 
-    return () => {
-      unlisten.then(f => f());
-      unlistenClose.then(f => f());
-      unlistenMove.then(f => f());
+      return () => {
+        unlistenSelected();
+        unlistenClose();
+        unlistenMove();
+      };
     };
-  }, [isWindowMenuOpen]);
+
+    const cleanupPromise = setupListeners();
+    return () => {
+      cleanupPromise.then(cleanup => cleanup());
+    };
+  }, []); // 依存関係なしで一度だけ実行
+
+  // ─ Keyboard shortcut: Ctrl+Shift+S ─
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyS') {
+        e.preventDefault();
+        handleCapture();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedWindow]);
 
   const handleClose = async () => {
     try {
@@ -117,6 +143,50 @@ function MainApp() {
     }
   };
 
+  const handleCapture = async () => {
+    if (isCapturing) return;
+    setIsCapturing(true);
+    setCaptureError(null);
+    setLastCapturePath(null);
+
+    try {
+      // Save into <appDataDir>/captures/ so the path is always valid
+      const dataDir = await appDataDir();
+      const saveDir = `${dataDir}captures`;
+
+      const hwnd = selectedWindow && selectedWindow.hwnd !== 0 ? selectedWindow.hwnd : 0;
+      console.log('Initiating capture:', {
+        target: selectedWindow ? selectedWindow.title : 'Auto (Foreground)',
+        hwnd: hwnd
+      });
+
+      const savedPath: string = await invoke('capture_window', { hwnd, saveDir });
+
+      setLastCapturePath(savedPath);
+      console.log('Captured:', savedPath);
+
+      // Auto-clear feedback after 3 s
+      if (feedbackTimeout.current) clearTimeout(feedbackTimeout.current);
+      feedbackTimeout.current = setTimeout(() => setLastCapturePath(null), 3000);
+    } catch (err) {
+      console.error('Capture failed:', err);
+      setCaptureError(String(err));
+      if (feedbackTimeout.current) clearTimeout(feedbackTimeout.current);
+      feedbackTimeout.current = setTimeout(() => setCaptureError(null), 4000);
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  // Determine capture button appearance
+  const captureTitle = lastCapturePath
+    ? `Saved: ${lastCapturePath}`
+    : captureError
+      ? `Error: ${captureError}`
+      : 'Capture Screenshot (Ctrl+Shift+S)';
+
+  const captureColor = captureError ? '#f87171' : lastCapturePath ? '#4ade80' : '#4ade80';
+
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div className="liquidGlass-wrapper dock">
@@ -142,8 +212,21 @@ function MainApp() {
             <Maximize />
           </div>
 
-          <div className="dock-item" title="Capture Screenshot (Ctrl+Shift+S)">
-            <ImageIcon color="#4ade80" />
+          {/* ─ Capture button ─ */}
+          <div
+            className="dock-item"
+            title={captureTitle}
+            onClick={handleCapture}
+            style={{
+              opacity: isCapturing ? 0.5 : 1,
+              cursor: isCapturing ? 'wait' : 'pointer',
+              transition: 'opacity 0.2s',
+            }}
+          >
+            {isCapturing
+              ? <Camera size={20} color="#facc15" style={{ animation: 'spin 1s linear infinite' }} />
+              : <ImageIcon color={captureColor} />
+            }
           </div>
 
           <div className="dock-item" title="Settings">
@@ -159,7 +242,7 @@ function MainApp() {
   );
 }
 
-// --- POPUP WINDOW ---
+// ─── POPUP WINDOW ────────────────────────────────────────────────────────────
 function WindowSelectPopup() {
   const [windows, setWindows] = useState<WindowInfo[]>([]);
   const [selectedWindow, setSelectedWindow] = useState<WindowInfo | null>(null);
@@ -194,7 +277,7 @@ function WindowSelectPopup() {
 
   const handleSelectWindow = async (w: WindowInfo) => {
     setSelectedWindow(w);
-    await emit('window-selected', w);
+    await emitTo('main', 'window-selected', w);
     const win = getCurrentWindow();
     await win.hide();
   };
@@ -245,7 +328,7 @@ function WindowSelectPopup() {
   );
 }
 
-// --- ENTRY POINT ---
+// ─── ENTRY POINT ─────────────────────────────────────────────────────────────
 function App() {
   const currentWin = getCurrentWindow();
 
