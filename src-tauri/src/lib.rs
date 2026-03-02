@@ -326,6 +326,195 @@ fn update_project_text(project_dir: String, text: String) -> Result<(), String> 
     Ok(())
 }
 
+// ─── Capture Preview Features ────────────────────────────────────────────────
+
+#[command]
+fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| format!("ファイル読み込みに失敗しました: {}", e))
+}
+
+#[derive(Serialize, Deserialize)]
+struct CaptureData {
+    image: String,
+    text: String,
+    timestamp: u64,
+}
+
+#[command]
+fn save_capture_text(image_path: String, text: String) -> Result<(), String> {
+    let path = PathBuf::from(&image_path);
+    let json_path = path.with_extension("json");
+    
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+        
+    let image_filename = path.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let data = CaptureData {
+        image: image_filename,
+        text,
+        timestamp,
+    };
+    
+    let json_content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
+        
+    std::fs::write(&json_path, json_content)
+        .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
+        
+    Ok(())
+}
+
+#[command]
+fn save_text_only(project_dir: String, text: String) -> Result<(), String> {
+    let captures_dir = PathBuf::from(&project_dir).join("captures");
+    if !captures_dir.exists() {
+        return Err("Projects captures directory not found".to_string());
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+        
+    let json_filename = format!("text_{timestamp}.json");
+    let json_path = captures_dir.join(&json_filename);
+
+    let data = CaptureData {
+        image: "".to_string(), // 空文字でテキストのみであることを示す
+        text,
+        timestamp,
+    };
+    
+    let json_content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
+        
+    std::fs::write(&json_path, json_content)
+        .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
+        
+    Ok(())
+}
+
+#[command]
+fn update_capture_text(json_path: String, new_text: String) -> Result<(), String> {
+    let path = PathBuf::from(&json_path);
+    if !path.exists() {
+        return Err("JSON File not found".to_string());
+    }
+
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("ファイル読み込みに失敗しました: {}", e))?;
+        
+    let mut data: CaptureData = serde_json::from_str(&content)
+        .map_err(|e| format!("JSONのパースに失敗しました: {}", e))?;
+
+    data.text = new_text;
+
+    let json_content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
+        
+    std::fs::write(&path, json_content)
+        .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
+
+    Ok(())
+}
+
+#[command]
+fn delete_capture_item(image_path: String, json_path: String) -> Result<(), String> {
+    let i_path = PathBuf::from(&image_path);
+    if !image_path.is_empty() && i_path.exists() {
+        let _ = std::fs::remove_file(&i_path);
+    }
+
+    let j_path = PathBuf::from(&json_path);
+    if !json_path.is_empty() && j_path.exists() {
+        let _ = std::fs::remove_file(&j_path);
+    }
+
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct HistoryItem {
+    image_path: String,
+    json_path: String,
+    image_name: String,
+    text: String,
+    timestamp: u64,
+}
+
+#[command]
+fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String> {
+    let captures_dir = PathBuf::from(&project_dir).join("captures");
+    if !captures_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut history = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(captures_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let ext = path.extension().and_then(|s| s.to_str());
+                if ext == Some("png") {
+                    let json_path = path.with_extension("json");
+                    let mut text = String::new();
+                    let mut timestamp = 0;
+
+                    if json_path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&json_path) {
+                            if let Ok(data) = serde_json::from_str::<CaptureData>(&content) {
+                                text = data.text;
+                                timestamp = data.timestamp;
+                            }
+                        }
+                    } else {
+                        // JSONがない場合はファイルの更新日時をフォールバックとして使う
+                        timestamp = std::fs::metadata(&path)
+                            .and_then(|m| m.modified())
+                            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64)
+                            .unwrap_or(0);
+                    }
+
+                    history.push(HistoryItem {
+                        image_path: path.to_string_lossy().into_owned(),
+                        json_path: json_path.to_string_lossy().into_owned(),
+                        image_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                        text,
+                        timestamp,
+                    });
+                } else if ext == Some("json") {
+                    // txt-only case or standalone json. If it corresponds to a PNG, it's already handled.
+                    // We check if image is empty to treat as text-only.
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Ok(data) = serde_json::from_str::<CaptureData>(&content) {
+                            if data.image.is_empty() {
+                                history.push(HistoryItem {
+                                    image_path: "".to_string(), // 画像なし
+                                    json_path: path.to_string_lossy().into_owned(),
+                                    image_name: "".to_string(),
+                                    text: data.text,
+                                    timestamp: data.timestamp,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 最新のものが上に来るようにソート
+    history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    
+    Ok(history)
+}
+
 // ─── App entry ───────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -348,7 +537,13 @@ pub fn run() {
             capture_window,
             list_projects,
             create_project,
-            update_project_text
+            update_project_text,
+            read_file_bytes,
+            save_capture_text,
+            get_project_captures,
+            save_text_only,
+            update_capture_text,
+            delete_capture_item
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

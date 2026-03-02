@@ -14,7 +14,7 @@
       {
         "title": "GameCapReaction",
         "label": "main",
-        "width": 310,
+        "width": 410,
         "height": 70,
         "resizable": false,
         "maximizable": false,
@@ -55,6 +55,38 @@
         "visible": false,
         "skipTaskbar": true,
         "url": "/?window=projects"
+      },
+      {
+        "title": "Capture Preview",
+        "label": "capture-preview",
+        "width": 400,
+        "height": 550,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "url": "/?window=capture-preview"
+      },
+      {
+        "title": "Project History",
+        "label": "history-menu",
+        "width": 600,
+        "height": 500,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "url": "/?window=history-menu"
       }
     ],
     "security": {

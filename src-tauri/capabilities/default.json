@@ -5,7 +5,9 @@
   "windows": [
     "main",
     "window-select",
-    "project-menu"
+    "project-menu",
+    "capture-preview",
+    "history-menu"
   ],
   "permissions": [
     "core:default",
