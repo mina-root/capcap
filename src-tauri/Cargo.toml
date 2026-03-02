@@ -27,3 +27,4 @@ windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_UI_Window
 image = { version = "0.25", default-features = false, features = ["png"] }
 window-vibrancy = "0.7.1"
 reqwest = { version = "0.12", features = ["blocking", "multipart"] }
+tauri-plugin-dialog = "2.3.0"

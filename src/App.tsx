@@ -5,6 +5,7 @@ import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
 import { appDataDir } from '@tauri-apps/api/path';
+import { open } from '@tauri-apps/plugin-dialog';
 import './index.css';
 
 interface WindowInfo {
@@ -102,9 +103,15 @@ function MainApp() {
     }
   };
 
+  const getProjectsRoot = async () => {
+    const saved = localStorage.getItem('projectsRoot');
+    if (saved) return saved;
+    return await appDataDir();
+  };
+
   const loadProjects = async () => {
     try {
-      const dataDir = await appDataDir();
+      const dataDir = await getProjectsRoot();
       const projList: ProjectInfo[] = await invoke('list_projects', { appDataDir: dataDir });
       if (projList.length > 0 && !activeProject) {
         setActiveProject(projList[0]);
@@ -460,7 +467,7 @@ function MainApp() {
       if (activeProject) {
         saveDir = `${activeProject.dir_path}/captures`;
       } else {
-        const dataDir = await appDataDir();
+        const dataDir = await getProjectsRoot();
         saveDir = `${dataDir}captures`;
       }
 
@@ -711,9 +718,15 @@ function ProjectMenuPopup() {
   const [discordThreadId, setDiscordThreadId] = useState('');
   const [isSavingText, setIsSavingText] = useState(false);
 
+  const getProjectsRoot = async () => {
+    const saved = localStorage.getItem('projectsRoot');
+    if (saved) return saved;
+    return await appDataDir();
+  };
+
   const fetchProjects = async () => {
     try {
-      const dataDir = await appDataDir();
+      const dataDir = await getProjectsRoot();
       const wins: ProjectInfo[] = await invoke('list_projects', { appDataDir: dataDir });
       setProjects(wins);
     } catch (err) {
@@ -761,7 +774,7 @@ function ProjectMenuPopup() {
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
     try {
-      const dataDir = await appDataDir();
+      const dataDir = await getProjectsRoot();
       const newProj: ProjectInfo = await invoke('create_project', {
         appDataDir: dataDir,
         name: newProjectName.trim(),
@@ -1356,6 +1369,7 @@ function SettingsMenuPopup() {
   const [direction, setDirection] = useState<'up' | 'down'>('up');
   const [webhookUrl, setWebhookUrl] = useState('');
   const [autoPost, setAutoPost] = useState(false);
+  const [projectsRoot, setProjectsRoot] = useState('');
 
   useEffect(() => {
     const unlistenDir = listen<'up' | 'down'>('settings-menu-direction', (e) => {
@@ -1369,14 +1383,40 @@ function SettingsMenuPopup() {
     const savedAuto = localStorage.getItem('discordAutoPost');
     if (savedAuto) setAutoPost(savedAuto === 'true');
 
+    const loadProjectsRoot = async () => {
+      const savedRoot = localStorage.getItem('projectsRoot');
+      if (savedRoot) {
+        setProjectsRoot(savedRoot);
+      } else {
+        setProjectsRoot(await appDataDir());
+      }
+    };
+    loadProjectsRoot();
+
     return () => {
       unlistenDir.then(f => f());
     };
   }, []);
 
+  const handlePickProjectsRoot = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: projectsRoot
+      });
+      if (selected && typeof selected === 'string') {
+        setProjectsRoot(selected);
+      }
+    } catch (e) {
+      console.error("Failed to open directory picker", e);
+    }
+  };
+
   const handleSave = () => {
     localStorage.setItem('discordWebhookUrl', webhookUrl);
     localStorage.setItem('discordAutoPost', autoPost ? 'true' : 'false');
+    localStorage.setItem('projectsRoot', projectsRoot);
     // Notify MainApp of settings change so interval runs with latest
     emitTo('main', 'settings-updated');
     handleClose();
@@ -1402,6 +1442,30 @@ function SettingsMenuPopup() {
           </div>
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>Project Files Folder</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  className="project-input"
+                  placeholder="Select folder..."
+                  value={projectsRoot}
+                  readOnly
+                  style={{ flex: 1, fontSize: '0.8rem', opacity: 0.8 }}
+                />
+                <button
+                  className="project-btn apply"
+                  onClick={handlePickProjectsRoot}
+                  style={{ whiteSpace: 'nowrap', padding: '0 12px' }}
+                >
+                  Browse
+                </button>
+              </div>
+              <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>
+                Select the base directory where projects and captures will be stored.
+              </span>
+            </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>Discord Webhook URL</label>

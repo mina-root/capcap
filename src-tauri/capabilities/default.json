@@ -7,10 +7,12 @@
     "window-select",
     "project-menu",
     "capture-preview",
-    "history-menu"
+    "history-menu",
+    "settings-menu"
   ],
   "permissions": [
     "core:default",
+    "dialog:allow-open",
     "core:window:allow-start-dragging",
     "core:window:allow-close",
     "core:window:allow-set-size",
