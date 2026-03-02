@@ -8,6 +8,15 @@ import { appDataDir } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
 import './index.css';
 
+import {
+  STORAGE_KEYS,
+  POPUP_SIZES,
+  MENU_OFFSETS,
+  EVENT_NAMES
+} from './constants';
+import { setPopupPosition, getDirectionRelativeToMonitor } from './utils/windowPosition';
+import { useLanguage } from './i18n';
+
 interface WindowInfo {
   hwnd: number;
   title: string;
@@ -24,6 +33,7 @@ export interface ProjectInfo {
 
 // ─── MAIN DOCK ───────────────────────────────────────────────────────────────
 function MainApp() {
+  const { t } = useLanguage();
   const [isWindowMenuOpen, setIsWindowMenuOpen] = useState(false);
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false);
   const [isHistoryMenuOpen, setIsHistoryMenuOpen] = useState(false);
@@ -40,6 +50,7 @@ function MainApp() {
   const isProjectMenuOpenRef = useRef(false);
   const isHistoryMenuOpenRef = useRef(false);
   const isSettingsMenuOpenRef = useRef(false);
+  const previewTextRef = useRef("");
 
   useEffect(() => { isWindowMenuOpenRef.current = isWindowMenuOpen; }, [isWindowMenuOpen]);
   useEffect(() => { isProjectMenuOpenRef.current = isProjectMenuOpen; }, [isProjectMenuOpen]);
@@ -140,10 +151,20 @@ function MainApp() {
 
       const unlistenMove = await getCurrentWindow().onMoved(followPosition);
 
+      const unlistenPreviewText = await listen<string>('preview-text-changed', (event) => {
+        previewTextRef.current = event.payload;
+      });
+
+      const unlistenPreviewClosed = await listen('preview-closed', () => {
+        previewTextRef.current = "";
+      });
+
       return () => {
         unlistenSelected();
         unlistenClose();
         unlistenMove();
+        unlistenPreviewText();
+        unlistenPreviewClosed();
       };
     };
 
@@ -182,6 +203,13 @@ function MainApp() {
     try {
       const popupWin = (await getAllWindows()).find(w => w.label === 'capture-preview');
       if (popupWin && await popupWin.isVisible()) {
+        if (previewTextRef.current.trim() === "") {
+          // If no text, close preview automatically and allow next action
+          await emit('capture-preview-cancel');
+          await popupWin.hide();
+          previewTextRef.current = "";
+          return false;
+        }
         await emit('capture-preview-blink');
         await popupWin.setFocus();
         return true;
@@ -200,26 +228,16 @@ function MainApp() {
       if (!popupWin) return;
 
       if (!isWindowMenuOpen) {
-        const monitor = await currentMonitor();
-        const pos = await win.outerPosition();
-        const sf = monitor ? monitor.scaleFactor : 1;
+        const direction = await getDirectionRelativeToMonitor(win);
+        await emit(EVENT_NAMES.WINDOW_SELECT_DIRECTION, direction);
 
-        let direction: 'up' | 'down' = 'up';
-        if (monitor) {
-          if (pos.y < monitor.size.height / 2) direction = 'down';
-        }
-
-        await emit('window-select-direction', direction);
-
-        const outerSize = await win.outerSize();
-        const pSize = await popupWin.outerSize();
-        const offsetXPhysical = Math.round((outerSize.width - pSize.width) / 2);
-
-        if (direction === 'up') {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round(360 * sf)));
-        } else {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
-        }
+        await setPopupPosition(
+          win,
+          popupWin,
+          direction,
+          MENU_OFFSETS.WINDOW_SELECT.up,
+          MENU_OFFSETS.WINDOW_SELECT.down
+        );
 
         await popupWin.show();
         await popupWin.setFocus();
@@ -228,6 +246,7 @@ function MainApp() {
         // Close others concurrently without blocking
         if (isProjectMenuOpen) toggleProjectMenu();
         if (isHistoryMenuOpen) toggleHistoryMenu();
+        if (isSettingsMenuOpen) toggleSettingsMenu();
       } else {
         await popupWin.hide();
         setIsWindowMenuOpen(false);
@@ -246,28 +265,16 @@ function MainApp() {
       if (!popupWin) return;
 
       if (!isProjectMenuOpen) {
-        const monitor = await currentMonitor();
-        const pos = await win.outerPosition();
-        const sf = monitor ? monitor.scaleFactor : 1;
+        const direction = await getDirectionRelativeToMonitor(win);
+        await emit(EVENT_NAMES.PROJECT_MENU_DIRECTION, direction);
 
-        let direction: 'up' | 'down' = 'up';
-        if (monitor) {
-          if (pos.y < monitor.size.height / 2) direction = 'down';
-        }
-
-        await emit('project-menu-direction', direction);
-
-        const outerSize = await win.outerSize();
-        const pSize = await popupWin.outerSize();
-        const offsetXPhysical = Math.round((outerSize.width - pSize.width) / 2);
-
-        // Same vertical logic as window select:
-        // Height of project popup will be ~400
-        if (direction === 'up') {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round(420 * sf)));
-        } else {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
-        }
+        await setPopupPosition(
+          win,
+          popupWin,
+          direction,
+          MENU_OFFSETS.PROJECT_MENU.up,
+          MENU_OFFSETS.PROJECT_MENU.down
+        );
 
         await popupWin.show();
         await popupWin.setFocus();
@@ -276,6 +283,7 @@ function MainApp() {
         // Close others concurrently without blocking
         if (isWindowMenuOpen) toggleWindowMenu();
         if (isHistoryMenuOpen) toggleHistoryMenu();
+        if (isSettingsMenuOpen) toggleSettingsMenu();
       } else {
         await popupWin.hide();
         setIsProjectMenuOpen(false);
@@ -293,26 +301,16 @@ function MainApp() {
       if (!popupWin) return;
 
       if (!isHistoryMenuOpen) {
-        const monitor = await currentMonitor();
-        const pos = await win.outerPosition();
-        const sf = monitor ? monitor.scaleFactor : 1;
+        const direction = await getDirectionRelativeToMonitor(win);
+        await emit(EVENT_NAMES.HISTORY_MENU_DIRECTION, { direction, project: activeProject });
 
-        let direction: 'up' | 'down' = 'up';
-        if (monitor) {
-          if (pos.y < monitor.size.height / 2) direction = 'down';
-        }
-
-        await emit('history-menu-direction', { direction, project: activeProject });
-
-        const outerSize = await win.outerSize();
-        const pSize = await popupWin.outerSize();
-        const offsetXPhysical = Math.round((outerSize.width - pSize.width) / 2);
-
-        if (direction === 'up') {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round(520 * sf)));
-        } else {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
-        }
+        await setPopupPosition(
+          win,
+          popupWin,
+          direction,
+          MENU_OFFSETS.HISTORY_MENU.up,
+          MENU_OFFSETS.HISTORY_MENU.down
+        );
 
         await popupWin.show();
         await popupWin.setFocus();
@@ -339,26 +337,16 @@ function MainApp() {
       if (!popupWin) return;
 
       if (!isSettingsMenuOpen) {
-        const monitor = await currentMonitor();
-        const pos = await win.outerPosition();
-        const sf = monitor ? monitor.scaleFactor : 1;
+        const direction = await getDirectionRelativeToMonitor(win);
+        await emit(EVENT_NAMES.SETTINGS_MENU_DIRECTION, direction);
 
-        let direction: 'up' | 'down' = 'up';
-        if (monitor) {
-          if (pos.y < monitor.size.height / 2) direction = 'down';
-        }
-
-        await emit('settings-menu-direction', direction);
-
-        const outerSize = await win.outerSize();
-        const pSize = await popupWin.outerSize();
-        const offsetXPhysical = Math.round((outerSize.width - pSize.width) / 2);
-
-        if (direction === 'up') {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round(320 * sf)));
-        } else {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
-        }
+        await setPopupPosition(
+          win,
+          popupWin,
+          direction,
+          MENU_OFFSETS.SETTINGS_MENU.up,
+          MENU_OFFSETS.SETTINGS_MENU.down
+        );
 
         await popupWin.show();
         await popupWin.setFocus();
@@ -379,46 +367,39 @@ function MainApp() {
   const handleTextOnly = async () => {
     if (!activeProject) return;
     try {
+      if (await checkCapturePreviewOpen()) return;
+
+      // Close all other menu popups
+      if (isWindowMenuOpen) toggleWindowMenu();
+      if (isProjectMenuOpen) toggleProjectMenu();
+      if (isHistoryMenuOpen) toggleHistoryMenu();
+      if (isSettingsMenuOpen) toggleSettingsMenu();
+
       const win = getCurrentWindow();
       const popupWin = (await getAllWindows()).find(w => w.label === 'capture-preview');
       if (popupWin) {
-        const monitor = await currentMonitor();
-        const pos = await win.outerPosition();
-        const sf = monitor ? monitor.scaleFactor : 1;
-        let direction: 'up' | 'down' = 'up';
-        if (monitor) {
-          if (pos.y < monitor.size.height / 2) direction = 'down';
-        }
+        const direction = await getDirectionRelativeToMonitor(win);
 
         // パスを空にして「テキストのみ」モードとして開かせる
-        await emit('show-capture-preview', { path: '', direction, project: activeProject });
+        await emit(EVENT_NAMES.SHOW_CAPTURE_PREVIEW, { path: '', direction, project: activeProject });
 
-        const targetPopupWidth = 400;
-        const targetPopupHeight = 300;
-        await popupWin.setSize(new LogicalSize(targetPopupWidth, targetPopupHeight));
+        await popupWin.setSize(new LogicalSize(POPUP_SIZES.TEXT_ONLY.width, POPUP_SIZES.TEXT_ONLY.height));
 
-        const outerSize = await win.outerSize();
-        const offsetXPhysical = Math.round((outerSize.width - targetPopupWidth * sf) / 2);
-
-        if (direction === 'up') {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round((targetPopupHeight + 20) * sf)));
-        } else {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
-        }
+        await setPopupPosition(
+          win,
+          popupWin,
+          direction,
+          POPUP_SIZES.TEXT_ONLY.height + 20,
+          MENU_OFFSETS.WINDOW_SELECT.down,
+          POPUP_SIZES.TEXT_ONLY.width
+        );
 
         await popupWin.show();
         await popupWin.setFocus();
-        const allWins = await getAllWindows();
-        const winSelect = allWins.find(w => w.label === 'window-select');
-        const projMenu = allWins.find(w => w.label === 'project-menu');
-        const histMenu = allWins.find(w => w.label === 'history-menu');
-        if (winSelect) await winSelect.hide();
-        if (projMenu) await projMenu.hide();
-        if (histMenu) await histMenu.hide();
-
         setIsWindowMenuOpen(false);
         setIsProjectMenuOpen(false);
         setIsHistoryMenuOpen(false);
+        setIsSettingsMenuOpen(false);
       }
     } catch (err) {
       console.error("Failed to open text-only capture preview", err);
@@ -430,20 +411,20 @@ function MainApp() {
   };
 
   useEffect(() => {
-    const unlistenProj = listen<ProjectInfo>('project-selected', (e) => {
+    const unlistenProj = listen<ProjectInfo>(EVENT_NAMES.PROJECT_SELECTED, (e) => {
       handleActiveProjectEvent(e.payload);
       setIsProjectMenuOpen(false);
     });
 
-    const unlistenCloseProj = listen('project-menu-closed', () => {
+    const unlistenCloseProj = listen(EVENT_NAMES.PROJECT_MENU_CLOSED, () => {
       setIsProjectMenuOpen(false);
     });
 
-    const unlistenCloseHist = listen('history-menu-closed', () => {
+    const unlistenCloseHist = listen(EVENT_NAMES.HISTORY_MENU_CLOSED, () => {
       setIsHistoryMenuOpen(false);
     });
 
-    const unlistenCloseSet = listen('settings-menu-closed', () => {
+    const unlistenCloseSet = listen(EVENT_NAMES.SETTINGS_MENU_CLOSED, () => {
       setIsSettingsMenuOpen(false);
     });
 
@@ -457,6 +438,14 @@ function MainApp() {
 
   const handleCapture = async () => {
     if (isCapturing) return;
+    if (await checkCapturePreviewOpen()) return;
+
+    // Close all other menu popups
+    if (isWindowMenuOpen) toggleWindowMenu();
+    if (isProjectMenuOpen) toggleProjectMenu();
+    if (isHistoryMenuOpen) toggleHistoryMenu();
+    if (isSettingsMenuOpen) toggleSettingsMenu();
+
     setIsCapturing(true);
     setCaptureError(null);
     setLastCapturePath(null);
@@ -486,42 +475,27 @@ function MainApp() {
       const popupWin = (await getAllWindows()).find(w => w.label === 'capture-preview');
       if (popupWin) {
         const win = getCurrentWindow();
-        const monitor = await currentMonitor();
-        const pos = await win.outerPosition();
-        const sf = monitor ? monitor.scaleFactor : 1;
-        let direction: 'up' | 'down' = 'up';
-        if (monitor) {
-          if (pos.y < monitor.size.height / 2) direction = 'down';
-        }
+        const direction = await getDirectionRelativeToMonitor(win);
 
-        const targetPopupWidth = 400;
-        const targetPopupHeight = 550;
-        await popupWin.setSize(new LogicalSize(targetPopupWidth, targetPopupHeight));
+        await popupWin.setSize(new LogicalSize(POPUP_SIZES.CAPTURE_PREVIEW.width, POPUP_SIZES.CAPTURE_PREVIEW.height));
 
-        const outerSize = await win.outerSize();
-        const offsetXPhysical = Math.round((outerSize.width - targetPopupWidth * sf) / 2);
-
-        if (direction === 'up') {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round((targetPopupHeight + 20) * sf)));
-        } else {
-          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
-        }
-
-        const allWins = await getAllWindows();
-        const winSelect = allWins.find(w => w.label === 'window-select');
-        const projMenu = allWins.find(w => w.label === 'project-menu');
-        const histMenu = allWins.find(w => w.label === 'history-menu');
-        if (winSelect) await winSelect.hide();
-        if (projMenu) await projMenu.hide();
-        if (histMenu) await histMenu.hide();
+        await setPopupPosition(
+          win,
+          popupWin,
+          direction,
+          POPUP_SIZES.CAPTURE_PREVIEW.height + 20,
+          MENU_OFFSETS.WINDOW_SELECT.down,
+          POPUP_SIZES.CAPTURE_PREVIEW.width
+        );
 
         setIsWindowMenuOpen(false);
         setIsProjectMenuOpen(false);
         setIsHistoryMenuOpen(false);
+        setIsSettingsMenuOpen(false);
 
         await popupWin.show();
         await popupWin.setFocus();
-        await emit('show-capture-preview', { path: savedPath, direction, project: activeProject });
+        await emit(EVENT_NAMES.SHOW_CAPTURE_PREVIEW, { path: savedPath, direction, project: activeProject });
       }
 
       // Auto-clear feedback after 3 s
@@ -539,10 +513,10 @@ function MainApp() {
 
   // Determine capture button appearance
   const captureTitle = lastCapturePath
-    ? `Saved: ${lastCapturePath}`
+    ? `${t('save')}: ${lastCapturePath}`
     : captureError
       ? `Error: ${captureError}`
-      : 'Capture Screenshot (Ctrl+Shift+S)';
+      : t('captureTooltip');
 
   const captureColor = captureError ? '#f87171' : lastCapturePath ? '#4ade80' : '#4ade80';
 
@@ -554,20 +528,20 @@ function MainApp() {
         <div className="liquidGlass-shine"></div>
 
         <div className="liquidGlass-text dock">
-          <div className="dock-item" title="Drag to Move" style={{ cursor: 'grab' }} onPointerDown={(e) => {
+          <div className="dock-item" title={t('dragToMove')} style={{ cursor: 'grab' }} onPointerDown={(e) => {
             if (e.button === 0) getCurrentWindow().startDragging();
           }}>
             <GripHorizontal />
           </div>
 
-          <div className="dock-item" title="Projects (Ctrl+P)" onClick={toggleProjectMenu} style={{
+          <div className="dock-item" title={t('projectsTooltip')} onClick={toggleProjectMenu} style={{
             background: isProjectMenuOpen ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
             color: activeProject ? '#a78bfa' : 'inherit'
           }}>
             <FolderKanban />
           </div>
 
-          <div className="dock-item" title="Select Target Window" onClick={toggleWindowMenu} style={{
+          <div className="dock-item" title={t('selectWindowTooltip')} onClick={toggleWindowMenu} style={{
             background: isWindowMenuOpen ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
             color: selectedWindow && selectedWindow.hwnd !== 0 ? '#60a5fa' : 'inherit'
           }}>
@@ -591,14 +565,14 @@ function MainApp() {
             }
           </div>
 
-          <div className="dock-item" title="Text Note" onClick={handleTextOnly} style={{
+          <div className="dock-item" title={t('textNoteTooltip')} onClick={handleTextOnly} style={{
             opacity: activeProject ? 1 : 0.3,
             cursor: activeProject ? 'pointer' : 'not-allowed'
           }}>
             <FileEdit />
           </div>
 
-          <div className="dock-item" title="Project History" onClick={toggleHistoryMenu} style={{
+          <div className="dock-item" title={t('historyTooltip')} onClick={toggleHistoryMenu} style={{
             background: isHistoryMenuOpen ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
             opacity: activeProject ? 1 : 0.3,
             cursor: activeProject ? 'pointer' : 'not-allowed'
@@ -606,13 +580,13 @@ function MainApp() {
             <ScrollText />
           </div>
 
-          <div className="dock-item" title="Settings" onClick={toggleSettingsMenu} style={{
+          <div className="dock-item" title={t('settingsTooltip')} onClick={toggleSettingsMenu} style={{
             background: isSettingsMenuOpen ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
           }}>
             <Settings />
           </div>
 
-          <div className="dock-item" title="Close App" onClick={handleClose}>
+          <div className="dock-item" title={t('closeAppTooltip')} onClick={handleClose}>
             <X color="#f87171" />
           </div>
         </div>
@@ -623,6 +597,7 @@ function MainApp() {
 
 // ─── POPUP WINDOW ────────────────────────────────────────────────────────────
 function WindowSelectPopup() {
+  const { t } = useLanguage();
   const [windows, setWindows] = useState<WindowInfo[]>([]);
   const [selectedWindow, setSelectedWindow] = useState<WindowInfo | null>(null);
   const [direction, setDirection] = useState<'up' | 'down'>('up');
@@ -670,9 +645,10 @@ function WindowSelectPopup() {
 
         <div className="liquidGlass-text" style={{ display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 3, position: 'relative', width: '100%', height: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px 8px 4px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-            <span style={{ fontSize: '0.9rem', fontWeight: 600, opacity: 0.9 }}>Capture Target</span>
+            <span style={{ fontSize: '0.9rem', fontWeight: 600, opacity: 0.9 }}>{t('captureTarget')}</span>
             <div
               style={{ cursor: 'pointer', padding: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', transition: 'transform 0.2s' }}
+              title={t('refreshTooltip')}
               onClick={() => fetchWindows()}
               onMouseEnter={(e) => e.currentTarget.style.transform = 'rotate(180deg)'}
               onMouseLeave={(e) => e.currentTarget.style.transform = 'rotate(0deg)'}
@@ -684,10 +660,10 @@ function WindowSelectPopup() {
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '6px' }} className="window-list-scroll">
             <div
               className={`window-item ${selectedWindow === null || selectedWindow?.hwnd === 0 ? 'selected' : ''}`}
-              onClick={() => handleSelectWindow({ hwnd: 0, title: 'Auto (Active Window)' })}
+              onClick={() => handleSelectWindow({ hwnd: 0, title: t('autoActiveWindow') })}
             >
               <span className="window-item-title">
-                Auto (Current Active Window)
+                {t('autoActiveWindowFull')}
               </span>
             </div>
 
@@ -709,6 +685,7 @@ function WindowSelectPopup() {
 
 // ─── PROJECT MENU POPUP ──────────────────────────────────────────────────────
 function ProjectMenuPopup() {
+  const { t } = useLanguage();
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
   const [direction, setDirection] = useState<'up' | 'down'>('up');
@@ -822,7 +799,7 @@ function ProjectMenuPopup() {
           {/* Left Panel: Project List */}
           <div style={{ flex: '1', display: 'flex', flexDirection: 'column', gap: '8px', borderRight: '1px solid rgba(255,255,255,0.1)', paddingRight: '12px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px 8px 4px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-              <span style={{ fontSize: '0.9rem', fontWeight: 600, opacity: 0.9 }}>Projects</span>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600, opacity: 0.9 }}>{t('projectsTitle')}</span>
               <div
                 style={{ cursor: 'pointer', padding: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)' }}
                 onClick={() => setIsCreatingProject(!isCreatingProject)}
@@ -837,7 +814,7 @@ function ProjectMenuPopup() {
                   autoFocus
                   type="text"
                   className="project-input"
-                  placeholder="New Project Name"
+                  placeholder={t('newProjectNamePlaceholder')}
                   value={newProjectName}
                   onChange={(e) => setNewProjectName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleCreateProject(); }}
@@ -879,15 +856,15 @@ function ProjectMenuPopup() {
                     className="project-btn apply"
                     onClick={() => activateProject(selectedProject)}
                   >
-                    Select Active
+                    {t('apply')}
                   </button>
                 </div>
 
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: 0.8 }}>
                     <FileText size={14} />
-                    <span style={{ fontSize: '0.8rem' }}>Project Notes</span>
-                    {isSavingText && <span style={{ fontSize: '0.7rem', color: '#4ade80' }}>Saved</span>}
+                    <span style={{ fontSize: '0.8rem' }}>{t('notes')}</span>
+                    {isSavingText && <span style={{ fontSize: '0.7rem', color: '#4ade80' }}>{t('saving')}</span>}
                   </div>
                   <textarea
                     className="project-textarea window-list-scroll"
@@ -897,7 +874,7 @@ function ProjectMenuPopup() {
                     placeholder="Add texts, links, and context here. They will be saved to your project folder."
                   />
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                    <span style={{ fontSize: '0.8rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Discord Thread ID:</span>
+                    <span style={{ fontSize: '0.8rem', opacity: 0.8, whiteSpace: 'nowrap' }}>{t('discordThreadId')}:</span>
                     <input
                       type="text"
                       className="project-input"
@@ -912,7 +889,7 @@ function ProjectMenuPopup() {
               </>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', opacity: 0.5, fontSize: '0.9rem' }}>
-                Select or Create a project
+                {t('projectsTitle')}
               </div>
             )}
           </div>
@@ -925,6 +902,7 @@ function ProjectMenuPopup() {
 
 // ─── CAPTURE PREVIEW POPUP ───────────────────────────────────────────────────
 function CapturePreviewPopup() {
+  const { t } = useLanguage();
   const [imagePath, setImagePath] = useState<string | null>(null);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [text, setText] = useState('');
@@ -932,6 +910,10 @@ function CapturePreviewPopup() {
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [isBlinking, setIsBlinking] = useState(false);
   const maxChars = 2000;
+
+  useEffect(() => {
+    emit('preview-text-changed', text);
+  }, [text]);
 
   useEffect(() => {
     const unlisten = listen<{ path: string, direction: string, project: ProjectInfo | null }>('show-capture-preview', async (e) => {
@@ -958,9 +940,14 @@ function CapturePreviewPopup() {
       setTimeout(() => setIsBlinking(false), 500);
     });
 
+    const unlistenCancel = listen('capture-preview-cancel', () => {
+      handleSkip();
+    });
+
     return () => {
       unlisten.then(f => f());
       unlistenBlink.then(f => f());
+      unlistenCancel.then(f => f());
     };
   }, []);
 
@@ -1004,6 +991,7 @@ function CapturePreviewPopup() {
       }
 
       setText('');
+      await emit('preview-closed');
       await getCurrentWindow().hide();
     } catch (err) {
       console.error("Failed to save capture", err);
@@ -1020,6 +1008,8 @@ function CapturePreviewPopup() {
         console.error("Failed to delete skipped capture", err);
       }
     }
+    setText('');
+    await emit('preview-closed');
     const win = getCurrentWindow();
     await win.hide();
   };
@@ -1037,7 +1027,7 @@ function CapturePreviewPopup() {
               if (e.button === 0) getCurrentWindow().startDragging();
             }}>
               <GripHorizontal size={14} style={{ opacity: 0.5 }} />
-              <span style={{ fontSize: '1rem', fontWeight: 600 }}>{isTextOnly ? "Text Note" : "Capture Preview"}</span>
+              <span style={{ fontSize: '1rem', fontWeight: 600 }}>{isTextOnly ? t('textNote') : t('capturePreview')}</span>
             </div>
             <X size={16} style={{ cursor: 'pointer', opacity: 0.7 }} onClick={handleSkip} />
           </div>
@@ -1058,13 +1048,13 @@ function CapturePreviewPopup() {
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '150px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: 0.8 }}>
                 {isTextOnly ? <FileEdit size={14} /> : <FileText size={14} />}
-                <span style={{ fontSize: '0.85rem' }}>{isTextOnly ? "Add Text Note" : "Add Context or Notes"}</span>
+                <span style={{ fontSize: '0.85rem' }}>{isTextOnly ? t('addTextNote') : t('addContext')}</span>
               </div>
               <textarea
                 autoFocus
                 className="project-textarea window-list-scroll"
                 style={{ flex: 1, resize: 'none', fontSize: '0.9rem' }}
-                placeholder={isTextOnly ? "Enter your note here..." : "What's happening in this capture..."}
+                placeholder={isTextOnly ? t('notePlaceholder') : t('contextPlaceholder')}
                 value={text}
                 onChange={(e) => {
                   if (e.target.value.length <= maxChars) setText(e.target.value);
@@ -1076,7 +1066,7 @@ function CapturePreviewPopup() {
                 </span>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button className="project-btn apply" onClick={handleSave} disabled={isSaving || (!isTextOnly && !imagePath) || (isTextOnly && text.trim() === '')}>
-                    {isSaving ? 'Saving...' : 'Save & Close'}
+                    {isSaving ? t('saving') : t('saveAndClose')}
                   </button>
                 </div>
               </div>
@@ -1099,6 +1089,7 @@ interface HistoryItem {
 }
 
 function HistoryMenuPopup() {
+  const { t } = useLanguage();
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [direction, setDirection] = useState<'up' | 'down'>('up');
   const [project, setProject] = useState<ProjectInfo | null>(null);
@@ -1193,7 +1184,7 @@ function HistoryMenuPopup() {
     if (!project) return;
     const webhookUrl = localStorage.getItem('discordWebhookUrl');
     if (!webhookUrl) {
-      alert("Please configure a Discord Webhook URL in Settings first.");
+      alert(t('discordWebhookUrl')); // TODO: specific alert string
       return;
     }
 
@@ -1239,7 +1230,7 @@ function HistoryMenuPopup() {
         <div className="liquidGlass-text" style={{ zIndex: 3, position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '8px', marginBottom: '8px' }}>
             <span style={{ fontSize: '1rem', fontWeight: 600 }}>
-              {project ? `Project History: ${project.name}` : `Project History`}
+              {project ? `${t('historyTitle')}: ${project.name}` : t('historyTitle')}
             </span>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
               {project && historyItems.some(i => !i.discord_posted) && (
@@ -1250,7 +1241,7 @@ function HistoryMenuPopup() {
                   style={{ padding: '4px 12px', fontSize: '0.8rem' }}
                 >
                   <Send size={14} style={{ marginRight: '6px' }} />
-                  {isBatchPosting ? 'Sending...' : 'Batch Post Unsent'}
+                  {isBatchPosting ? t('posting') : t('batchPost')}
                 </button>
               )}
               <X size={16} style={{ cursor: 'pointer', opacity: 0.7 }} onClick={() => {
@@ -1262,10 +1253,10 @@ function HistoryMenuPopup() {
 
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', paddingRight: '4px' }} className="window-list-scroll">
             {!project && (
-              <div style={{ opacity: 0.5, textAlign: 'center', marginTop: '20px' }}>No project selected.</div>
+              <div style={{ opacity: 0.5, textAlign: 'center', marginTop: '20px' }}>{t('projectsTitle')}</div>
             )}
             {project && historyItems.length === 0 && (
-              <div style={{ opacity: 0.5, textAlign: 'center', marginTop: '20px' }}>No captures found for this project.</div>
+              <div style={{ opacity: 0.5, textAlign: 'center', marginTop: '20px' }}>{t('noHistory')}</div>
             )}
             {historyItems.map((item, idx) => {
               const isEditing = editingItemPath === item.json_path;
@@ -1273,16 +1264,16 @@ function HistoryMenuPopup() {
                 <div key={idx} style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '15px', background: 'rgba(20, 20, 20, 0.85)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '10px', position: 'relative', boxShadow: '0 4px 6px rgba(0,0,0,0.3)' }}>
                   <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
                     {item.discord_posted && !isEditing && (
-                      <div title="Posted to Discord" style={{ color: '#5865F2', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+                      <div title={t('postedStatus')} style={{ color: '#5865F2', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
                         <Check size={16} />
                       </div>
                     )}
                     {isEditing ? null : (
                       <>
-                        <button style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '4px' }} title="Edit Text" onClick={() => handleStartEdit(item)}>
+                        <button style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '4px' }} title={t('editTooltip')} onClick={() => handleStartEdit(item)}>
                           <Edit2 size={14} />
                         </button>
-                        <button style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', padding: '4px' }} title="Delete History" onClick={() => handleDelete(item)}>
+                        <button style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', padding: '4px' }} title={t('deleteTooltip')} onClick={() => handleDelete(item)}>
                           <Trash2 size={14} />
                         </button>
                       </>
@@ -1366,6 +1357,7 @@ function App() {
 
 // ─── SETTINGS MENU POPUP ─────────────────────────────────────────────────────
 function SettingsMenuPopup() {
+  const { lang, changeLanguage, t } = useLanguage();
   const [direction, setDirection] = useState<'up' | 'down'>('up');
   const [webhookUrl, setWebhookUrl] = useState('');
   const [autoPost, setAutoPost] = useState(false);
@@ -1384,7 +1376,7 @@ function SettingsMenuPopup() {
     if (savedAuto) setAutoPost(savedAuto === 'true');
 
     const loadProjectsRoot = async () => {
-      const savedRoot = localStorage.getItem('projectsRoot');
+      const savedRoot = localStorage.getItem(STORAGE_KEYS.PROJECTS_ROOT);
       if (savedRoot) {
         setProjectsRoot(savedRoot);
       } else {
@@ -1416,7 +1408,7 @@ function SettingsMenuPopup() {
   const handleSave = () => {
     localStorage.setItem('discordWebhookUrl', webhookUrl);
     localStorage.setItem('discordAutoPost', autoPost ? 'true' : 'false');
-    localStorage.setItem('projectsRoot', projectsRoot);
+    localStorage.setItem(STORAGE_KEYS.PROJECTS_ROOT, projectsRoot);
     // Notify MainApp of settings change so interval runs with latest
     emitTo('main', 'settings-updated');
     handleClose();
@@ -1437,19 +1429,19 @@ function SettingsMenuPopup() {
 
         <div className="liquidGlass-text object-fit" style={{ zIndex: 3, position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '8px', marginBottom: '16px' }}>
-            <span style={{ fontSize: '1rem', fontWeight: 600 }}>Settings</span>
+            <span style={{ fontSize: '1rem', fontWeight: 600 }}>{t('settingsTitle')}</span>
             <X size={16} style={{ cursor: 'pointer', opacity: 0.7 }} onClick={handleClose} />
           </div>
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>Project Files Folder</label>
+              <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>{t('projectFilesFolder')}</label>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input
                   type="text"
                   className="project-input"
-                  placeholder="Select folder..."
+                  placeholder={t('selectFolderPlaceholder')}
                   value={projectsRoot}
                   readOnly
                   style={{ flex: 1, fontSize: '0.8rem', opacity: 0.8 }}
@@ -1459,16 +1451,16 @@ function SettingsMenuPopup() {
                   onClick={handlePickProjectsRoot}
                   style={{ whiteSpace: 'nowrap', padding: '0 12px' }}
                 >
-                  Browse
+                  {t('browse')}
                 </button>
               </div>
               <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>
-                Select the base directory where projects and captures will be stored.
+                {t('projectFilesFolderDesc')}
               </span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>Discord Webhook URL</label>
+              <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>{t('discordWebhookUrl')}</label>
               <input
                 type="text"
                 className="project-input"
@@ -1477,7 +1469,7 @@ function SettingsMenuPopup() {
                 onChange={e => setWebhookUrl(e.target.value)}
               />
               <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>
-                Enter the webhook URL where captures should be posted. Include thread_id query parameters if you want to post to a specific thread.
+                {t('discordWebhookUrlDesc')}
               </span>
             </div>
 
@@ -1490,15 +1482,35 @@ function SettingsMenuPopup() {
                 style={{ cursor: 'pointer' }}
               />
               <label htmlFor="autoPost" style={{ fontSize: '0.85rem', fontWeight: 500, cursor: 'pointer' }}>
-                Enable Automatic Posting
+                {t('enableAutoPost')}
               </label>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>{t('uiLanguage')}</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className={`project-btn ${lang === 'ja' ? 'apply' : 'add'}`}
+                  onClick={() => changeLanguage('ja')}
+                  style={{ flex: 1 }}
+                >
+                  {t('langJa')}
+                </button>
+                <button
+                  className={`project-btn ${lang === 'en' ? 'apply' : 'add'}`}
+                  onClick={() => changeLanguage('en')}
+                  style={{ flex: 1 }}
+                >
+                  {t('langEn')}
+                </button>
+              </div>
             </div>
 
             <div style={{ flex: 1 }} />
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: 'auto' }}>
-              <button className="project-btn add" onClick={handleClose}>Cancel</button>
-              <button className="project-btn apply" onClick={handleSave}>Save Settings</button>
+              <button className="project-btn add" onClick={handleClose}>{t('cancel')}</button>
+              <button className="project-btn apply" onClick={handleSave}>{t('saveSettings')}</button>
             </div>
 
           </div>

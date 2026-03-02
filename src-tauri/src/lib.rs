@@ -214,11 +214,7 @@ fn capture_window(hwnd: isize, save_dir: String) -> Result<String, String> {
         std::fs::create_dir_all(&save_path)
             .map_err(|e| format!("Failed to create save dir: {e}"))?;
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let file_path = save_path.join(format!("cap_{timestamp}.png"));
+        let file_path = save_path.join(FILE_PENDING_IMAGE);
 
         image::save_buffer(
             &file_path,
@@ -235,6 +231,11 @@ fn capture_window(hwnd: isize, save_dir: String) -> Result<String, String> {
 
 // ─── Project Management ────────────────────────────────────────────────────────
 
+const DIR_PROJECTS: &str = "projects";
+const DIR_CAPTURES: &str = "captures";
+const FILE_PROJECT_JSON: &str = "project.json";
+const FILE_PENDING_IMAGE: &str = "_pending_cap.png";
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ProjectInfo {
     pub id: String,
@@ -249,7 +250,7 @@ pub struct ProjectInfo {
 #[command]
 fn list_projects(app_data_dir: String) -> Vec<ProjectInfo> {
     let mut projects = Vec::new();
-    let projects_dir = PathBuf::from(&app_data_dir).join("projects");
+    let projects_dir = PathBuf::from(&app_data_dir).join(DIR_PROJECTS);
 
     if !projects_dir.exists() {
         return projects;
@@ -259,7 +260,7 @@ fn list_projects(app_data_dir: String) -> Vec<ProjectInfo> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let json_path = path.join("project.json");
+                let json_path = path.join(FILE_PROJECT_JSON);
                 if json_path.exists() {
                     if let Ok(content) = std::fs::read_to_string(&json_path) {
                         if let Ok(mut info) = serde_json::from_str::<ProjectInfo>(&content) {
@@ -287,9 +288,9 @@ fn create_project(app_data_dir: String, name: String, text: String) -> Result<Pr
         
     let id = format!("proj_{}", timestamp);
     
-    let projects_dir = PathBuf::from(&app_data_dir).join("projects");
+    let projects_dir = PathBuf::from(&app_data_dir).join(DIR_PROJECTS);
     let target_dir = projects_dir.join(&id);
-    let captures_dir = target_dir.join("captures");
+    let captures_dir = target_dir.join(DIR_CAPTURES);
     
     // ディレクトリ作成
     std::fs::create_dir_all(&captures_dir).map_err(|e| format!("ディレクトリ作成に失敗しました: {}", e))?;
@@ -304,7 +305,7 @@ fn create_project(app_data_dir: String, name: String, text: String) -> Result<Pr
     };
     
     // JSON保存
-    let json_path = target_dir.join("project.json");
+    let json_path = target_dir.join(FILE_PROJECT_JSON);
     let json_content = serde_json::to_string_pretty(&info).map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
     std::fs::write(json_path, json_content).map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
     
@@ -313,7 +314,7 @@ fn create_project(app_data_dir: String, name: String, text: String) -> Result<Pr
 
 #[command]
 fn update_project(project: ProjectInfo) -> Result<(), String> {
-    let path = PathBuf::from(&project.dir_path).join("project.json");
+    let path = PathBuf::from(&project.dir_path).join(FILE_PROJECT_JSON);
     if !path.exists() {
         return Err("プロジェクトファイルが見つかりません".to_string());
     }
@@ -333,7 +334,7 @@ fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
 
 #[derive(Serialize, Deserialize)]
 struct CaptureData {
-    image: String,
+    image: Option<String>,
     text: String,
     timestamp: u64,
     #[serde(default)]
@@ -342,37 +343,43 @@ struct CaptureData {
 
 #[command]
 fn save_capture_text(image_path: String, text: String) -> Result<String, String> {
-    let path = PathBuf::from(&image_path);
-    let json_path = path.with_extension("json");
-    
+    let old_path = PathBuf::from(&image_path);
+    if !old_path.exists() {
+        return Err("Pending capture image not found".to_string());
+    }
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-        
-    let image_filename = path.file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
+
+    let new_filename = format!("cap_{timestamp}.png");
+    let new_path = old_path.with_file_name(&new_filename);
+    let json_path = new_path.with_extension("json");
+
+    // Rename temp file to official filename
+    std::fs::rename(&old_path, &new_path)
+        .map_err(|e| format!("Failed to finalize image: {}", e))?;
 
     let data = CaptureData {
-        image: image_filename,
+        image: Some(new_filename),
         text,
         timestamp,
         discord_posted: false,
     };
-    
+
     let json_content = serde_json::to_string_pretty(&data)
         .map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
-        
+
     std::fs::write(&json_path, json_content)
         .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
-        
+
     Ok(json_path.to_string_lossy().into_owned())
 }
 
 #[command]
 fn save_text_only(project_dir: String, text: String) -> Result<String, String> {
-    let captures_dir = PathBuf::from(&project_dir).join("captures");
+    let captures_dir = PathBuf::from(&project_dir).join(DIR_CAPTURES);
     if !captures_dir.exists() {
         return Err("Projects captures directory not found".to_string());
     }
@@ -386,7 +393,7 @@ fn save_text_only(project_dir: String, text: String) -> Result<String, String> {
     let json_path = captures_dir.join(&json_filename);
 
     let data = CaptureData {
-        image: "".to_string(), // 空文字でテキストのみであることを示す
+        image: None,
         text,
         timestamp,
         discord_posted: false,
@@ -452,7 +459,7 @@ struct HistoryItem {
 
 #[command]
 fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String> {
-    let captures_dir = PathBuf::from(&project_dir).join("captures");
+    let captures_dir = PathBuf::from(&project_dir).join(DIR_CAPTURES);
     if !captures_dir.exists() {
         return Ok(Vec::new());
     }
@@ -465,6 +472,10 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
             if path.is_file() {
                 let ext = path.extension().and_then(|s| s.to_str());
                 if ext == Some("png") {
+                    let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+                    if filename == FILE_PENDING_IMAGE {
+                        continue;
+                    }
                     let json_path = path.with_extension("json");
                     let mut text = String::new();
                     let mut timestamp = 0;
@@ -499,7 +510,11 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                     // We check if image is empty to treat as text-only.
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         if let Ok(data) = serde_json::from_str::<CaptureData>(&content) {
-                            if data.image.is_empty() {
+                            let is_empty = match &data.image {
+                                Some(s) => s.is_empty(),
+                                None => true,
+                            };
+                            if is_empty {
                                 history.push(HistoryItem {
                                     image_path: "".to_string(), // 画像なし
                                     json_path: path.to_string_lossy().into_owned(),
@@ -542,7 +557,7 @@ fn mark_discord_posted(json_path: String) -> Result<(), String> {
             .unwrap_or(0);
 
         CaptureData {
-            image: image_filename,
+            image: Some(image_filename),
             text: "".to_string(),
             timestamp,
             discord_posted: false,
@@ -561,9 +576,9 @@ fn mark_discord_posted(json_path: String) -> Result<(), String> {
 }
 
 #[command]
-fn post_to_discord(webhook_url: String, text: String, image_path: String, thread_id: Option<String>) -> Result<(), String> {
-    let client = reqwest::blocking::Client::new();
-    let mut form = reqwest::blocking::multipart::Form::new();
+async fn post_to_discord(webhook_url: String, text: String, image_path: String, thread_id: Option<String>) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let mut form = reqwest::multipart::Form::new();
     
     if !text.is_empty() {
         form = form.text("content", text);
@@ -577,7 +592,7 @@ fn post_to_discord(webhook_url: String, text: String, image_path: String, thread
                 .to_string_lossy()
                 .into_owned();
             
-            let part = reqwest::blocking::multipart::Part::bytes(bytes)
+            let part = reqwest::multipart::Part::bytes(bytes)
                 .file_name(file_name);
             form = form.part("file", part);
         }
@@ -598,6 +613,7 @@ fn post_to_discord(webhook_url: String, text: String, image_path: String, thread
     let res = client.post(&url)
         .multipart(form)
         .send()
+        .await
         .map_err(|e| format!("Webhook送信に失敗しました: {}", e))?;
 
     if res.status().is_success() {
