@@ -87,6 +87,22 @@
         "visible": false,
         "skipTaskbar": true,
         "url": "/?window=history-menu"
+      },
+      {
+        "title": "Settings",
+        "label": "settings-menu",
+        "width": 450,
+        "height": 300,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "url": "/?window=settings-menu"
       }
     ],
     "security": {

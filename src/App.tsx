@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { FolderKanban, GripHorizontal, Image as ImageIcon, Maximize, Settings, X, RefreshCw, Camera, Plus, Check, FileText, ScrollText, FileEdit, Trash2, Edit2, Save } from 'lucide-react';
+import { FolderKanban, GripHorizontal, Image as ImageIcon, Maximize, Settings, X, RefreshCw, Camera, Plus, Check, FileText, ScrollText, FileEdit, Trash2, Edit2, Save, Send } from 'lucide-react';
 import { getCurrentWindow, currentMonitor, getAllWindows } from '@tauri-apps/api/window';
-import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
+import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
 import { appDataDir } from '@tauri-apps/api/path';
@@ -18,6 +18,7 @@ export interface ProjectInfo {
   text: string;
   created_at: number;
   dir_path: string;
+  discord_thread_id?: string;
 }
 
 // ─── MAIN DOCK ───────────────────────────────────────────────────────────────
@@ -25,6 +26,7 @@ function MainApp() {
   const [isWindowMenuOpen, setIsWindowMenuOpen] = useState(false);
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false);
   const [isHistoryMenuOpen, setIsHistoryMenuOpen] = useState(false);
+  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [selectedWindow, setSelectedWindow] = useState<WindowInfo | null>(null);
   const [activeProject, setActiveProject] = useState<ProjectInfo | null>(null);
 
@@ -36,65 +38,65 @@ function MainApp() {
   const isWindowMenuOpenRef = useRef(false);
   const isProjectMenuOpenRef = useRef(false);
   const isHistoryMenuOpenRef = useRef(false);
+  const isSettingsMenuOpenRef = useRef(false);
 
   useEffect(() => { isWindowMenuOpenRef.current = isWindowMenuOpen; }, [isWindowMenuOpen]);
   useEffect(() => { isProjectMenuOpenRef.current = isProjectMenuOpen; }, [isProjectMenuOpen]);
   useEffect(() => { isHistoryMenuOpenRef.current = isHistoryMenuOpen; }, [isHistoryMenuOpen]);
+  useEffect(() => { isSettingsMenuOpenRef.current = isSettingsMenuOpen; }, [isSettingsMenuOpen]);
 
+  const lastMoveTime = useRef(0);
   const followPosition = async () => {
+    const now = Date.now();
+    if (now - lastMoveTime.current < 8) return; // Debounce to ~120fps
+    lastMoveTime.current = now;
+
     const isWOpen = isWindowMenuOpenRef.current;
     const isPOpen = isProjectMenuOpenRef.current;
     const isHOpen = isHistoryMenuOpenRef.current;
-    if (!isWOpen && !isPOpen && !isHOpen) return;
+    const isSOpen = isSettingsMenuOpenRef.current;
+    if (!isWOpen && !isPOpen && !isHOpen && !isSOpen) return;
 
     const win = getCurrentWindow();
     const pos = await win.outerPosition();
+    const size = await win.outerSize();
     const monitor = await currentMonitor();
     if (!monitor) return;
-    const sf = monitor.scaleFactor;
-    const logicalY = pos.y / sf;
-    const logicalX = pos.x / sf;
+
+    const mainWidthPhysical = size.width;
+    const mainXPhysical = pos.x;
+    const mainYPhysical = pos.y;
 
     let direction: 'up' | 'down' = 'up';
-    if (pos.y < monitor.size.height / 2) direction = 'down';
+    if (mainYPhysical < monitor.size.height / 2) direction = 'down';
 
-    const mainWidth = 310;
+    const popupsMapping = [
+      { open: isWOpen, label: 'window-select', hOffset: 360, vOffset: 70 },
+      { open: isPOpen, label: 'project-menu', hOffset: 420, vOffset: 70 },
+      { open: isHOpen, label: 'history-menu', hOffset: 520, vOffset: 70 },
+      { open: isSOpen, label: 'settings-menu', hOffset: 320, vOffset: 70 }
+    ];
 
-    if (isWOpen) {
-      const popupWin = (await getAllWindows()).find(w => w.label === 'window-select');
-      if (popupWin) {
-        const popupWidth = 540;
-        const offsetX = (mainWidth - popupWidth) / 2;
-        if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - 360));
-        } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
-        }
-      }
-    }
+    const allWins = await getAllWindows();
+    for (const p of popupsMapping) {
+      if (p.open) {
+        const popupWin = allWins.find(w => w.label === p.label);
+        if (popupWin) {
+          const pSize = await popupWin.outerSize();
+          const offsetXPhysical = Math.round((mainWidthPhysical - pSize.width) / 2);
+          const sf = monitor.scaleFactor;
 
-    if (isPOpen) {
-      const popupWin = (await getAllWindows()).find(w => w.label === 'project-menu');
-      if (popupWin) {
-        const popupWidth = 600;
-        const offsetX = (mainWidth - popupWidth) / 2;
-        if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - 420));
-        } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
-        }
-      }
-    }
-
-    if (isHOpen) {
-      const popupWin = (await getAllWindows()).find(w => w.label === 'history-menu');
-      if (popupWin) {
-        const popupWidth = 600;
-        const offsetX = (mainWidth - popupWidth) / 2;
-        if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - 520));
-        } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
+          if (direction === 'up') {
+            await popupWin.setPosition(new PhysicalPosition(
+              mainXPhysical + offsetXPhysical,
+              mainYPhysical - Math.round(p.hOffset * sf)
+            ));
+          } else {
+            await popupWin.setPosition(new PhysicalPosition(
+              mainXPhysical + offsetXPhysical,
+              mainYPhysical + Math.round(p.vOffset * sf)
+            ));
+          }
         }
       }
     }
@@ -194,8 +196,6 @@ function MainApp() {
         const monitor = await currentMonitor();
         const pos = await win.outerPosition();
         const sf = monitor ? monitor.scaleFactor : 1;
-        const logicalY = pos.y / sf;
-        const logicalX = pos.x / sf;
 
         let direction: 'up' | 'down' = 'up';
         if (monitor) {
@@ -204,14 +204,14 @@ function MainApp() {
 
         await emit('window-select-direction', direction);
 
-        const popupWidth = 540;
-        const mainWidth = 410;
-        const offsetX = (mainWidth - popupWidth) / 2;
+        const outerSize = await win.outerSize();
+        const pSize = await popupWin.outerSize();
+        const offsetXPhysical = Math.round((outerSize.width - pSize.width) / 2);
 
         if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - 360));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round(360 * sf)));
         } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
         }
 
         await popupWin.show();
@@ -242,8 +242,6 @@ function MainApp() {
         const monitor = await currentMonitor();
         const pos = await win.outerPosition();
         const sf = monitor ? monitor.scaleFactor : 1;
-        const logicalY = pos.y / sf;
-        const logicalX = pos.x / sf;
 
         let direction: 'up' | 'down' = 'up';
         if (monitor) {
@@ -252,16 +250,16 @@ function MainApp() {
 
         await emit('project-menu-direction', direction);
 
-        const popupWidth = 600;
-        const mainWidth = 410;
-        const offsetX = (mainWidth - popupWidth) / 2;
+        const outerSize = await win.outerSize();
+        const pSize = await popupWin.outerSize();
+        const offsetXPhysical = Math.round((outerSize.width - pSize.width) / 2);
 
         // Same vertical logic as window select:
         // Height of project popup will be ~400
         if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - 420));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round(420 * sf)));
         } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
         }
 
         await popupWin.show();
@@ -291,8 +289,6 @@ function MainApp() {
         const monitor = await currentMonitor();
         const pos = await win.outerPosition();
         const sf = monitor ? monitor.scaleFactor : 1;
-        const logicalY = pos.y / sf;
-        const logicalX = pos.x / sf;
 
         let direction: 'up' | 'down' = 'up';
         if (monitor) {
@@ -301,14 +297,14 @@ function MainApp() {
 
         await emit('history-menu-direction', { direction, project: activeProject });
 
-        const popupWidth = 600;
-        const mainWidth = 410;
-        const offsetX = (mainWidth - popupWidth) / 2;
+        const outerSize = await win.outerSize();
+        const pSize = await popupWin.outerSize();
+        const offsetXPhysical = Math.round((outerSize.width - pSize.width) / 2);
 
         if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - 520));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round(520 * sf)));
         } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
         }
 
         await popupWin.show();
@@ -318,12 +314,58 @@ function MainApp() {
         // Close others concurrently without blocking
         if (isWindowMenuOpen) toggleWindowMenu();
         if (isProjectMenuOpen) toggleProjectMenu();
+        if (isSettingsMenuOpen) toggleSettingsMenu();
       } else {
         await popupWin.hide();
         setIsHistoryMenuOpen(false);
       }
     } catch (error) {
       console.error("Failed to toggle history menu", error);
+    }
+  };
+
+  const toggleSettingsMenu = async () => {
+    try {
+      if (await checkCapturePreviewOpen()) return;
+      const win = getCurrentWindow();
+      const popupWin = (await getAllWindows()).find(w => w.label === 'settings-menu');
+      if (!popupWin) return;
+
+      if (!isSettingsMenuOpen) {
+        const monitor = await currentMonitor();
+        const pos = await win.outerPosition();
+        const sf = monitor ? monitor.scaleFactor : 1;
+
+        let direction: 'up' | 'down' = 'up';
+        if (monitor) {
+          if (pos.y < monitor.size.height / 2) direction = 'down';
+        }
+
+        await emit('settings-menu-direction', direction);
+
+        const outerSize = await win.outerSize();
+        const pSize = await popupWin.outerSize();
+        const offsetXPhysical = Math.round((outerSize.width - pSize.width) / 2);
+
+        if (direction === 'up') {
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round(320 * sf)));
+        } else {
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
+        }
+
+        await popupWin.show();
+        await popupWin.setFocus();
+        setIsSettingsMenuOpen(true);
+
+        if (isWindowMenuOpen) toggleWindowMenu();
+        if (isProjectMenuOpen) toggleProjectMenu();
+        if (isHistoryMenuOpen) toggleHistoryMenu();
+      } else {
+        await popupWin.hide();
+        setIsSettingsMenuOpen(false);
+      }
+    } catch (error) {
+      console.error("Failed to toggle settings menu", error);
     }
   };
 
@@ -336,9 +378,6 @@ function MainApp() {
         const monitor = await currentMonitor();
         const pos = await win.outerPosition();
         const sf = monitor ? monitor.scaleFactor : 1;
-        const logicalY = pos.y / sf;
-        const logicalX = pos.x / sf;
-
         let direction: 'up' | 'down' = 'up';
         if (monitor) {
           if (pos.y < monitor.size.height / 2) direction = 'down';
@@ -347,17 +386,17 @@ function MainApp() {
         // パスを空にして「テキストのみ」モードとして開かせる
         await emit('show-capture-preview', { path: '', direction, project: activeProject });
 
-        const popupWidth = 400;
-        const popupHeight = 300;
-        await popupWin.setSize(new LogicalSize(popupWidth, popupHeight));
+        const targetPopupWidth = 400;
+        const targetPopupHeight = 300;
+        await popupWin.setSize(new LogicalSize(targetPopupWidth, targetPopupHeight));
 
-        const mainWidth = 410;
-        const offsetX = (mainWidth - popupWidth) / 2;
+        const outerSize = await win.outerSize();
+        const offsetXPhysical = Math.round((outerSize.width - targetPopupWidth * sf) / 2);
 
         if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - popupHeight - 20));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round((targetPopupHeight + 20) * sf)));
         } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
         }
 
         await popupWin.show();
@@ -397,10 +436,15 @@ function MainApp() {
       setIsHistoryMenuOpen(false);
     });
 
+    const unlistenCloseSet = listen('settings-menu-closed', () => {
+      setIsSettingsMenuOpen(false);
+    });
+
     return () => {
       unlistenProj.then(f => f());
       unlistenCloseProj.then(f => f());
       unlistenCloseHist.then(f => f());
+      unlistenCloseSet.then(f => f());
     };
   }, []);
 
@@ -438,25 +482,22 @@ function MainApp() {
         const monitor = await currentMonitor();
         const pos = await win.outerPosition();
         const sf = monitor ? monitor.scaleFactor : 1;
-        const logicalY = pos.y / sf;
-        const logicalX = pos.x / sf;
-
         let direction: 'up' | 'down' = 'up';
         if (monitor) {
           if (pos.y < monitor.size.height / 2) direction = 'down';
         }
 
-        const popupWidth = 400;
-        const popupHeight = 550;
-        await popupWin.setSize(new LogicalSize(popupWidth, popupHeight));
+        const targetPopupWidth = 400;
+        const targetPopupHeight = 550;
+        await popupWin.setSize(new LogicalSize(targetPopupWidth, targetPopupHeight));
 
-        const mainWidth = 410;
-        const offsetX = (mainWidth - popupWidth) / 2;
+        const outerSize = await win.outerSize();
+        const offsetXPhysical = Math.round((outerSize.width - targetPopupWidth * sf) / 2);
 
         if (direction === 'up') {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY - popupHeight - 20));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y - Math.round((targetPopupHeight + 20) * sf)));
         } else {
-          await popupWin.setPosition(new LogicalPosition(logicalX + offsetX, logicalY + 70));
+          await popupWin.setPosition(new PhysicalPosition(pos.x + offsetXPhysical, pos.y + Math.round(70 * sf)));
         }
 
         const allWins = await getAllWindows();
@@ -558,7 +599,9 @@ function MainApp() {
             <ScrollText />
           </div>
 
-          <div className="dock-item" title="Settings">
+          <div className="dock-item" title="Settings" onClick={toggleSettingsMenu} style={{
+            background: isSettingsMenuOpen ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
+          }}>
             <Settings />
           </div>
 
@@ -665,6 +708,7 @@ function ProjectMenuPopup() {
   const [newProjectName, setNewProjectName] = useState('');
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [projectText, setProjectText] = useState('');
+  const [discordThreadId, setDiscordThreadId] = useState('');
   const [isSavingText, setIsSavingText] = useState(false);
 
   const fetchProjects = async () => {
@@ -705,6 +749,7 @@ function ProjectMenuPopup() {
   const handleSelectProject = (p: ProjectInfo) => {
     setSelectedProject(p);
     setProjectText(p.text);
+    setDiscordThreadId(p.discord_thread_id || '');
   };
 
   const activateProject = async (p: ProjectInfo) => {
@@ -736,14 +781,14 @@ function ProjectMenuPopup() {
     if (!selectedProject) return;
     setIsSavingText(true);
     try {
-      await invoke('update_project_text', {
-        projectDir: selectedProject.dir_path,
-        text: projectText
+      const updatedInfo = { ...selectedProject, text: projectText, discord_thread_id: discordThreadId };
+      await invoke('update_project', {
+        project: updatedInfo
       });
       fetchProjects();
 
       // Update local state without losing focus ideally
-      setSelectedProject(prev => prev ? { ...prev, text: projectText } : null);
+      setSelectedProject(updatedInfo);
 
     } catch (e) {
       console.error("Failed to update text:", e);
@@ -838,6 +883,18 @@ function ProjectMenuPopup() {
                     onBlur={handleUpdateText}
                     placeholder="Add texts, links, and context here. They will be saved to your project folder."
                   />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                    <span style={{ fontSize: '0.8rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Discord Thread ID:</span>
+                    <input
+                      type="text"
+                      className="project-input"
+                      value={discordThreadId}
+                      onChange={(e) => setDiscordThreadId(e.target.value)}
+                      onBlur={handleUpdateText}
+                      placeholder="Optional"
+                      style={{ flex: 1, height: '30px', fontSize: '0.85rem' }}
+                    />
+                  </div>
                 </div>
               </>
             ) : (
@@ -900,18 +957,39 @@ function CapturePreviewPopup() {
     if (!project) return;
     setIsSaving(true);
     try {
+      let savedJsonPath = "";
       if (isTextOnly) {
-        await invoke('save_text_only', {
+        savedJsonPath = await invoke('save_text_only', {
           projectDir: project.dir_path,
           text: text
         });
       } else {
-        await invoke('save_capture_text', {
-          projectDir: project.dir_path,
+        savedJsonPath = await invoke('save_capture_text', {
           imagePath: imagePath,
           text: text
         });
       }
+
+      // Auto-post if enabled
+      const autoPostEnabled = localStorage.getItem('discordAutoPost') === 'true';
+      const webhookUrl = localStorage.getItem('discordWebhookUrl');
+      if (autoPostEnabled && webhookUrl) {
+        try {
+          await invoke('post_to_discord', {
+            webhookUrl,
+            text: text,
+            imagePath: imagePath || '',
+            threadId: project.discord_thread_id || null
+          });
+
+          if (savedJsonPath) {
+            await invoke('mark_discord_posted', { jsonPath: savedJsonPath });
+          }
+        } catch (postErr) {
+          console.error("Failed to auto-post after save", postErr);
+        }
+      }
+
       setText('');
       await getCurrentWindow().hide();
     } catch (err) {
@@ -922,6 +1000,13 @@ function CapturePreviewPopup() {
   };
 
   const handleSkip = async () => {
+    if (imagePath) {
+      try {
+        await invoke('delete_capture_item', { imagePath: imagePath, jsonPath: "" });
+      } catch (err) {
+        console.error("Failed to delete skipped capture", err);
+      }
+    }
     const win = getCurrentWindow();
     await win.hide();
   };
@@ -997,6 +1082,7 @@ interface HistoryItem {
   image_name: string;
   text: string;
   timestamp: number;
+  discord_posted?: boolean;
 }
 
 function HistoryMenuPopup() {
@@ -1009,6 +1095,7 @@ function HistoryMenuPopup() {
   const [editingItemPath, setEditingItemPath] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isBatchPosting, setIsBatchPosting] = useState(false);
 
   const loadHistory = async (proj: ProjectInfo) => {
     try {
@@ -1042,12 +1129,17 @@ function HistoryMenuPopup() {
       }
     });
 
+    const unlistenRefresh = listen('history-menu-refresh', () => {
+      if (project) loadHistory(project);
+    });
+
     return () => {
       unlistenDir.then(f => f());
+      unlistenRefresh.then(f => f());
       // Cleanup ObjectURLs
       Object.values(images).forEach(url => URL.revokeObjectURL(url));
     }
-  }, []); // Note: leaving images out of deps to avoid retrigger on image load
+  }, [project, images]);
 
   const handleDelete = async (item: HistoryItem) => {
     if (!project) return;
@@ -1084,6 +1176,46 @@ function HistoryMenuPopup() {
     setEditingText("");
   };
 
+  const handleBatchPost = async () => {
+    if (!project) return;
+    const webhookUrl = localStorage.getItem('discordWebhookUrl');
+    if (!webhookUrl) {
+      alert("Please configure a Discord Webhook URL in Settings first.");
+      return;
+    }
+
+    const unpostedItems = historyItems.filter(i => !i.discord_posted);
+    if (unpostedItems.length === 0) return;
+
+    setIsBatchPosting(true);
+    try {
+      // Items are sorted newest first, so we loop backwards to send oldest first
+      for (let i = unpostedItems.length - 1; i >= 0; i--) {
+        const item = unpostedItems[i];
+        await invoke('post_to_discord', {
+          webhookUrl,
+          text: item.text || '',
+          imagePath: item.image_path || '',
+          threadId: project.discord_thread_id || null
+        });
+        await invoke('mark_discord_posted', { jsonPath: item.json_path });
+
+        // Wait 2 seconds between posts to avoid rate limit unless it's the last item
+        if (i !== 0) {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      // Refresh list
+      await loadHistory(project);
+    } catch (e) {
+      console.error("Batch post failed:", e);
+      alert(`Batch post error: ${e}`);
+    } finally {
+      setIsBatchPosting(false);
+    }
+  };
+
   return (
     <div style={{ width: '100%', height: '100%', padding: '10px' }}>
       <div className={`liquidGlass-wrapper window-popup ${direction}`} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -1096,10 +1228,23 @@ function HistoryMenuPopup() {
             <span style={{ fontSize: '1rem', fontWeight: 600 }}>
               {project ? `Project History: ${project.name}` : `Project History`}
             </span>
-            <X size={16} style={{ cursor: 'pointer', opacity: 0.7 }} onClick={() => {
-              emitTo('main', 'history-menu-closed');
-              getCurrentWindow().hide();
-            }} />
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              {project && historyItems.some(i => !i.discord_posted) && (
+                <button
+                  className="project-btn apply"
+                  onClick={handleBatchPost}
+                  disabled={isBatchPosting}
+                  style={{ padding: '4px 12px', fontSize: '0.8rem' }}
+                >
+                  <Send size={14} style={{ marginRight: '6px' }} />
+                  {isBatchPosting ? 'Sending...' : 'Batch Post Unsent'}
+                </button>
+              )}
+              <X size={16} style={{ cursor: 'pointer', opacity: 0.7 }} onClick={() => {
+                emitTo('main', 'history-menu-closed');
+                getCurrentWindow().hide();
+              }} />
+            </div>
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', paddingRight: '4px' }} className="window-list-scroll">
@@ -1113,7 +1258,12 @@ function HistoryMenuPopup() {
               const isEditing = editingItemPath === item.json_path;
               return (
                 <div key={idx} style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '15px', background: 'rgba(20, 20, 20, 0.85)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '10px', position: 'relative', boxShadow: '0 4px 6px rgba(0,0,0,0.3)' }}>
-                  <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px' }}>
+                  <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {item.discord_posted && !isEditing && (
+                      <div title="Posted to Discord" style={{ color: '#5865F2', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+                        <Check size={16} />
+                      </div>
+                    )}
                     {isEditing ? null : (
                       <>
                         <button style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '4px' }} title="Edit Text" onClick={() => handleStartEdit(item)}>
@@ -1194,7 +1344,104 @@ function App() {
     return <HistoryMenuPopup />;
   }
 
+  if (currentWin.label === 'settings-menu') {
+    return <SettingsMenuPopup />;
+  }
+
   return <MainApp />;
+}
+
+// ─── SETTINGS MENU POPUP ─────────────────────────────────────────────────────
+function SettingsMenuPopup() {
+  const [direction, setDirection] = useState<'up' | 'down'>('up');
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [autoPost, setAutoPost] = useState(false);
+
+  useEffect(() => {
+    const unlistenDir = listen<'up' | 'down'>('settings-menu-direction', (e) => {
+      setDirection(e.payload);
+    });
+
+    // Load from localStorage
+    const savedUrl = localStorage.getItem('discordWebhookUrl');
+    if (savedUrl) setWebhookUrl(savedUrl);
+
+    const savedAuto = localStorage.getItem('discordAutoPost');
+    if (savedAuto) setAutoPost(savedAuto === 'true');
+
+    return () => {
+      unlistenDir.then(f => f());
+    };
+  }, []);
+
+  const handleSave = () => {
+    localStorage.setItem('discordWebhookUrl', webhookUrl);
+    localStorage.setItem('discordAutoPost', autoPost ? 'true' : 'false');
+    // Notify MainApp of settings change so interval runs with latest
+    emitTo('main', 'settings-updated');
+    handleClose();
+  };
+
+  const handleClose = async () => {
+    await emitTo('main', 'settings-menu-closed');
+    const win = getCurrentWindow();
+    await win.hide();
+  };
+
+  return (
+    <div style={{ width: '100%', height: '100%', padding: '10px' }}>
+      <div className={`liquidGlass-wrapper window-popup ${direction}`} style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className="liquidGlass-effect"></div>
+        <div className="liquidGlass-tint"></div>
+        <div className="liquidGlass-shine"></div>
+
+        <div className="liquidGlass-text object-fit" style={{ zIndex: 3, position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '8px', marginBottom: '16px' }}>
+            <span style={{ fontSize: '1rem', fontWeight: 600 }}>Settings</span>
+            <X size={16} style={{ cursor: 'pointer', opacity: 0.7 }} onClick={handleClose} />
+          </div>
+
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>Discord Webhook URL</label>
+              <input
+                type="text"
+                className="project-input"
+                placeholder="https://discord.com/api/webhooks/..."
+                value={webhookUrl}
+                onChange={e => setWebhookUrl(e.target.value)}
+              />
+              <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>
+                Enter the webhook URL where captures should be posted. Include thread_id query parameters if you want to post to a specific thread.
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input
+                type="checkbox"
+                id="autoPost"
+                checked={autoPost}
+                onChange={e => setAutoPost(e.target.checked)}
+                style={{ cursor: 'pointer' }}
+              />
+              <label htmlFor="autoPost" style={{ fontSize: '0.85rem', fontWeight: 500, cursor: 'pointer' }}>
+                Enable Automatic Posting
+              </label>
+            </div>
+
+            <div style={{ flex: 1 }} />
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: 'auto' }}>
+              <button className="project-btn add" onClick={handleClose}>Cancel</button>
+              <button className="project-btn apply" onClick={handleSave}>Save Settings</button>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default App;

@@ -242,6 +242,8 @@ pub struct ProjectInfo {
     pub text: String,
     pub created_at: u64,
     pub dir_path: String,
+    #[serde(default)]
+    pub discord_thread_id: Option<String>,
 }
 
 #[command]
@@ -298,6 +300,7 @@ fn create_project(app_data_dir: String, name: String, text: String) -> Result<Pr
         text,
         created_at: timestamp,
         dir_path: target_dir.to_string_lossy().into_owned(),
+        discord_thread_id: None,
     };
     
     // JSON保存
@@ -309,18 +312,13 @@ fn create_project(app_data_dir: String, name: String, text: String) -> Result<Pr
 }
 
 #[command]
-fn update_project_text(project_dir: String, text: String) -> Result<(), String> {
-    let path = PathBuf::from(&project_dir).join("project.json");
+fn update_project(project: ProjectInfo) -> Result<(), String> {
+    let path = PathBuf::from(&project.dir_path).join("project.json");
     if !path.exists() {
         return Err("プロジェクトファイルが見つかりません".to_string());
     }
     
-    let content = std::fs::read_to_string(&path).map_err(|e| format!("ファイル読み込みに失敗しました: {}", e))?;
-    let mut info: ProjectInfo = serde_json::from_str(&content).map_err(|e| format!("JSONのパースに失敗しました: {}", e))?;
-    
-    info.text = text;
-    
-    let json_content = serde_json::to_string_pretty(&info).map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
+    let json_content = serde_json::to_string_pretty(&project).map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
     std::fs::write(&path, json_content).map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
     
     Ok(())
@@ -338,10 +336,12 @@ struct CaptureData {
     image: String,
     text: String,
     timestamp: u64,
+    #[serde(default)]
+    discord_posted: bool,
 }
 
 #[command]
-fn save_capture_text(image_path: String, text: String) -> Result<(), String> {
+fn save_capture_text(image_path: String, text: String) -> Result<String, String> {
     let path = PathBuf::from(&image_path);
     let json_path = path.with_extension("json");
     
@@ -358,6 +358,7 @@ fn save_capture_text(image_path: String, text: String) -> Result<(), String> {
         image: image_filename,
         text,
         timestamp,
+        discord_posted: false,
     };
     
     let json_content = serde_json::to_string_pretty(&data)
@@ -366,11 +367,11 @@ fn save_capture_text(image_path: String, text: String) -> Result<(), String> {
     std::fs::write(&json_path, json_content)
         .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
         
-    Ok(())
+    Ok(json_path.to_string_lossy().into_owned())
 }
 
 #[command]
-fn save_text_only(project_dir: String, text: String) -> Result<(), String> {
+fn save_text_only(project_dir: String, text: String) -> Result<String, String> {
     let captures_dir = PathBuf::from(&project_dir).join("captures");
     if !captures_dir.exists() {
         return Err("Projects captures directory not found".to_string());
@@ -388,6 +389,7 @@ fn save_text_only(project_dir: String, text: String) -> Result<(), String> {
         image: "".to_string(), // 空文字でテキストのみであることを示す
         text,
         timestamp,
+        discord_posted: false,
     };
     
     let json_content = serde_json::to_string_pretty(&data)
@@ -396,7 +398,7 @@ fn save_text_only(project_dir: String, text: String) -> Result<(), String> {
     std::fs::write(&json_path, json_content)
         .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
         
-    Ok(())
+    Ok(json_path.to_string_lossy().into_owned())
 }
 
 #[command]
@@ -445,6 +447,7 @@ struct HistoryItem {
     image_name: String,
     text: String,
     timestamp: u64,
+    discord_posted: bool,
 }
 
 #[command]
@@ -465,12 +468,14 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                     let json_path = path.with_extension("json");
                     let mut text = String::new();
                     let mut timestamp = 0;
+                    let mut discord_posted = false;
 
                     if json_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&json_path) {
                             if let Ok(data) = serde_json::from_str::<CaptureData>(&content) {
                                 text = data.text;
                                 timestamp = data.timestamp;
+                                discord_posted = data.discord_posted;
                             }
                         }
                     } else {
@@ -487,6 +492,7 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                         image_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
                         text,
                         timestamp,
+                        discord_posted,
                     });
                 } else if ext == Some("json") {
                     // txt-only case or standalone json. If it corresponds to a PNG, it's already handled.
@@ -500,6 +506,7 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                                     image_name: "".to_string(),
                                     text: data.text,
                                     timestamp: data.timestamp,
+                                    discord_posted: data.discord_posted,
                                 });
                             }
                         }
@@ -513,6 +520,91 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
     history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     
     Ok(history)
+}
+
+#[command]
+fn mark_discord_posted(json_path: String) -> Result<(), String> {
+    let path = PathBuf::from(&json_path);
+
+    let mut data: CaptureData = if path.exists() {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("ファイル読み込みに失敗しました: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("JSONのパースに失敗しました: {}", e))?
+    } else {
+        let image_filename = path.with_extension("png").file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+            
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        CaptureData {
+            image: image_filename,
+            text: "".to_string(),
+            timestamp,
+            discord_posted: false,
+        }
+    };
+
+    data.discord_posted = true;
+
+    let json_content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
+        
+    std::fs::write(&path, json_content)
+        .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
+
+    Ok(())
+}
+
+#[command]
+fn post_to_discord(webhook_url: String, text: String, image_path: String, thread_id: Option<String>) -> Result<(), String> {
+    let client = reqwest::blocking::Client::new();
+    let mut form = reqwest::blocking::multipart::Form::new();
+    
+    if !text.is_empty() {
+        form = form.text("content", text);
+    }
+
+    if !image_path.is_empty() && PathBuf::from(&image_path).exists() {
+        if let Ok(bytes) = std::fs::read(&image_path) {
+            let file_name = PathBuf::from(&image_path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            
+            let part = reqwest::blocking::multipart::Part::bytes(bytes)
+                .file_name(file_name);
+            form = form.part("file", part);
+        }
+    }
+
+    let mut url = webhook_url;
+    if let Some(t_id) = thread_id {
+        if !t_id.is_empty() {
+            if url.contains('?') {
+                url.push_str(&format!("&thread_id={}", t_id));
+            } else {
+                url.push_str(&format!("?thread_id={}", t_id));
+            }
+        }
+    }
+
+    // Send
+    let res = client.post(&url)
+        .multipart(form)
+        .send()
+        .map_err(|e| format!("Webhook送信に失敗しました: {}", e))?;
+
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Discordからエラーが返されました: {}", res.status()))
+    }
 }
 
 // ─── App entry ───────────────────────────────────────────────────────────────
@@ -537,13 +629,15 @@ pub fn run() {
             capture_window,
             list_projects,
             create_project,
-            update_project_text,
+            update_project,
             read_file_bytes,
             save_capture_text,
             get_project_captures,
             save_text_only,
             update_capture_text,
-            delete_capture_item
+            delete_capture_item,
+            mark_discord_posted,
+            post_to_discord
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
