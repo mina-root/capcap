@@ -975,7 +975,7 @@ function CapturePreviewPopup() {
       const webhookUrl = localStorage.getItem('discordWebhookUrl');
       if (autoPostEnabled && webhookUrl) {
         try {
-          await invoke('post_to_discord', {
+          const messageId: string = await invoke('post_to_discord', {
             webhookUrl,
             text: text,
             imagePath: imagePath || '',
@@ -983,7 +983,10 @@ function CapturePreviewPopup() {
           });
 
           if (savedJsonPath) {
-            await invoke('mark_discord_posted', { jsonPath: savedJsonPath });
+            await invoke('mark_discord_posted', {
+              jsonPath: savedJsonPath,
+              messageId: messageId || null
+            });
           }
         } catch (postErr) {
           console.error("Failed to auto-post after save", postErr);
@@ -1086,14 +1089,168 @@ interface HistoryItem {
   text: string;
   timestamp: number;
   discord_posted?: boolean;
+  discord_message_id?: string;
 }
 
+// ─── HISTORY ITEM ROW (Lazy Image Loading) ───────────────────────────────────
+interface HistoryItemRowProps {
+  item: HistoryItem;
+  isEditing: boolean;
+  editingText: string;
+  isSavingEdit: boolean;
+  onStartEdit: (item: HistoryItem) => void;
+  onSaveEdit: (item: HistoryItem) => void;
+  onCancelEdit: () => void;
+  onDelete: (item: HistoryItem) => void;
+  onEditingTextChange: (text: string) => void;
+  postedStatusLabel: string;
+  editTooltip: string;
+  deleteTooltip: string;
+}
+
+function HistoryItemRow({
+  item, isEditing, editingText, isSavingEdit,
+  onStartEdit, onSaveEdit, onCancelEdit, onDelete, onEditingTextChange,
+  postedStatusLabel, editTooltip, deleteTooltip
+}: HistoryItemRowProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const loadedUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!item.image_path) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !loadedUrlRef.current && !isLoading) {
+          setIsLoading(true);
+          invoke<number[]>('read_file_bytes', { path: item.image_path })
+            .then(bytes => {
+              const blob = new Blob([new Uint8Array(bytes)], { type: 'image/png' });
+              const url = URL.createObjectURL(blob);
+              loadedUrlRef.current = url;
+              setImgSrc(url);
+              setIsLoading(false);
+            })
+            .catch(e => {
+              console.error('Failed to lazy-load history image:', e);
+              setIsLoading(false);
+            });
+          // Once triggered, no need to observe further
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.05 }
+    );
+
+    if (containerRef.current) observer.observe(containerRef.current);
+
+    return () => {
+      observer.disconnect();
+      // Release ObjectURL when the row is unmounted (e.g. after delete / refresh)
+      if (loadedUrlRef.current) {
+        URL.revokeObjectURL(loadedUrlRef.current);
+        loadedUrlRef.current = null;
+      }
+    };
+  }, [item.image_path]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '15px',
+        background: 'rgba(20, 20, 20, 0.85)',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        borderRadius: '10px', position: 'relative',
+        boxShadow: '0 4px 6px rgba(0,0,0,0.3)'
+      }}
+    >
+      {/* Action buttons */}
+      <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+        {item.discord_posted && !isEditing && (
+          <div title={postedStatusLabel} style={{ color: '#5865F2', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+            <Check size={16} />
+          </div>
+        )}
+        {isEditing ? null : (
+          <>
+            <button
+              style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '4px' }}
+              title={editTooltip}
+              onClick={() => onStartEdit(item)}
+            >
+              <Edit2 size={14} />
+            </button>
+            <button
+              style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', padding: '4px' }}
+              title={deleteTooltip}
+              onClick={() => onDelete(item)}
+            >
+              <Trash2 size={14} />
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Lazy-loaded image */}
+      {item.image_path && (
+        <div style={{
+          width: '200px', minHeight: '80px', background: 'rgba(0,0,0,0.3)',
+          borderRadius: '4px', overflow: 'hidden',
+          display: 'flex', justifyContent: 'center', alignItems: 'center'
+        }}>
+          {imgSrc ? (
+            <img src={imgSrc} style={{ width: '100%', objectFit: 'contain' }} />
+          ) : (
+            <span style={{ opacity: 0.5, padding: '20px', fontSize: '0.8rem' }}>
+              {isLoading ? 'Loading...' : '...'}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Text / edit area */}
+      <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '4px', marginRight: '40px' }}>
+        <div style={{ fontSize: '0.75rem', opacity: 0.5 }}>
+          {new Date(item.timestamp).toLocaleString()}{!item.image_path ? ' (Text Only)' : ''}
+        </div>
+        {isEditing ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+            <textarea
+              className="project-textarea"
+              autoFocus
+              style={{ minHeight: '80px', fontSize: '0.85rem' }}
+              value={editingText}
+              onChange={e => onEditingTextChange(e.target.value)}
+            />
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button className="project-btn apply" onClick={() => onSaveEdit(item)} disabled={isSavingEdit}>
+                <Save size={14} style={{ marginRight: '4px' }} /> Save
+              </button>
+              <button className="project-btn add" onClick={onCancelEdit} disabled={isSavingEdit}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: '0.85rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.9, marginTop: '4px' }}>
+            {item.text || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>No text provided.</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── HISTORY MENU POPUP ──────────────────────────────────────────────────────
 function HistoryMenuPopup() {
   const { t } = useLanguage();
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [direction, setDirection] = useState<'up' | 'down'>('up');
   const [project, setProject] = useState<ProjectInfo | null>(null);
-  const [images, setImages] = useState<Record<string, string>>({}); // path -> objectURL
+  // Removed: images state (was causing all images to be Eager Loaded into memory)
 
   // Edit / Delete State
   const [editingItemPath, setEditingItemPath] = useState<string | null>(null);
@@ -1101,21 +1258,15 @@ function HistoryMenuPopup() {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isBatchPosting, setIsBatchPosting] = useState(false);
 
+  // Keep a stable ref to project for use inside event handlers
+  const projectRef = useRef<ProjectInfo | null>(null);
+  projectRef.current = project;
+
   const loadHistory = async (proj: ProjectInfo) => {
     try {
+      // Only fetch metadata (JSON). Images are loaded on-demand per row.
       const items: HistoryItem[] = await invoke('get_project_captures', { projectDir: proj.dir_path });
       setHistoryItems(items);
-
-      // Eager load images where applicable
-      for (const item of items) {
-        if (item.image_path) {
-          invoke<number[]>('read_file_bytes', { path: item.image_path }).then(bytes => {
-            const blob = new Blob([new Uint8Array(bytes)], { type: 'image/png' });
-            const url = URL.createObjectURL(blob);
-            setImages(prev => ({ ...prev, [item.image_path]: url }));
-          }).catch(e => console.error("Failed to load history image preview:", e));
-        }
-      }
     } catch (err) {
       console.error("Failed to load history:", err);
     }
@@ -1134,23 +1285,37 @@ function HistoryMenuPopup() {
     });
 
     const unlistenRefresh = listen('history-menu-refresh', () => {
-      if (project) loadHistory(project);
+      const proj = projectRef.current;
+      if (proj) loadHistory(proj);
     });
 
     return () => {
       unlistenDir.then(f => f());
       unlistenRefresh.then(f => f());
-      // Cleanup ObjectURLs
-      Object.values(images).forEach(url => URL.revokeObjectURL(url));
-    }
-  }, [project, images]);
+      // Note: individual ObjectURLs are released by each HistoryItemRow on unmount
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once; project access via projectRef to avoid stale closure
 
   const handleDelete = async (item: HistoryItem) => {
-    if (!project) return;
+    if (!projectRef.current) return;
     try {
+      if (item.discord_posted && item.discord_message_id) {
+        const webhookUrl = localStorage.getItem('discordWebhookUrl');
+        if (webhookUrl) {
+          try {
+            await invoke('delete_discord_message', {
+              webhookUrl,
+              messageId: item.discord_message_id,
+              threadId: projectRef.current.discord_thread_id || null
+            });
+          } catch (discordErr) {
+            console.error("Failed to delete Discord message", discordErr);
+          }
+        }
+      }
       await invoke('delete_capture_item', { imagePath: item.image_path, jsonPath: item.json_path });
-      // Refresh list
-      loadHistory(project);
+      loadHistory(projectRef.current);
     } catch (e) {
       console.error("Failed to delete", e);
     }
@@ -1162,12 +1327,27 @@ function HistoryMenuPopup() {
   };
 
   const handleSaveEdit = async (item: HistoryItem) => {
-    if (!project) return;
+    if (!projectRef.current) return;
     setIsSavingEdit(true);
     try {
+      if (item.discord_posted && item.discord_message_id) {
+        const webhookUrl = localStorage.getItem('discordWebhookUrl');
+        if (webhookUrl) {
+          try {
+            await invoke('edit_discord_message', {
+              webhookUrl,
+              messageId: item.discord_message_id,
+              text: editingText,
+              threadId: projectRef.current.discord_thread_id || null
+            });
+          } catch (discordErr) {
+            console.error("Failed to sync edit with Discord", discordErr);
+          }
+        }
+      }
       await invoke('update_capture_text', { jsonPath: item.json_path, newText: editingText });
       setEditingItemPath(null);
-      loadHistory(project);
+      loadHistory(projectRef.current);
     } catch (e) {
       console.error("Failed to save edit", e);
     } finally {
@@ -1181,10 +1361,11 @@ function HistoryMenuPopup() {
   };
 
   const handleBatchPost = async () => {
-    if (!project) return;
+    if (!projectRef.current) return;
+    const proj = projectRef.current;
     const webhookUrl = localStorage.getItem('discordWebhookUrl');
     if (!webhookUrl) {
-      alert(t('discordWebhookUrl')); // TODO: specific alert string
+      alert(t('discordWebhookUrl'));
       return;
     }
 
@@ -1196,22 +1377,23 @@ function HistoryMenuPopup() {
       // Items are sorted newest first, so we loop backwards to send oldest first
       for (let i = unpostedItems.length - 1; i >= 0; i--) {
         const item = unpostedItems[i];
-        await invoke('post_to_discord', {
+        const messageId: string = await invoke('post_to_discord', {
           webhookUrl,
           text: item.text || '',
           imagePath: item.image_path || '',
-          threadId: project.discord_thread_id || null
+          threadId: proj.discord_thread_id || null
         });
-        await invoke('mark_discord_posted', { jsonPath: item.json_path });
+        await invoke('mark_discord_posted', {
+          jsonPath: item.json_path,
+          messageId: messageId || null
+        });
 
-        // Wait 2 seconds between posts to avoid rate limit unless it's the last item
         if (i !== 0) {
           await new Promise(r => setTimeout(r, 2000));
         }
       }
 
-      // Refresh list
-      await loadHistory(project);
+      await loadHistory(proj);
     } catch (e) {
       console.error("Batch post failed:", e);
       alert(`Batch post error: ${e}`);
@@ -1251,76 +1433,33 @@ function HistoryMenuPopup() {
             </div>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', paddingRight: '4px' }} className="window-list-scroll">
+          <div
+            style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', paddingRight: '4px' }}
+            className="window-list-scroll"
+          >
             {!project && (
               <div style={{ opacity: 0.5, textAlign: 'center', marginTop: '20px' }}>{t('projectsTitle')}</div>
             )}
             {project && historyItems.length === 0 && (
               <div style={{ opacity: 0.5, textAlign: 'center', marginTop: '20px' }}>{t('noHistory')}</div>
             )}
-            {historyItems.map((item, idx) => {
-              const isEditing = editingItemPath === item.json_path;
-              return (
-                <div key={idx} style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '15px', background: 'rgba(20, 20, 20, 0.85)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '10px', position: 'relative', boxShadow: '0 4px 6px rgba(0,0,0,0.3)' }}>
-                  <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    {item.discord_posted && !isEditing && (
-                      <div title={t('postedStatus')} style={{ color: '#5865F2', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
-                        <Check size={16} />
-                      </div>
-                    )}
-                    {isEditing ? null : (
-                      <>
-                        <button style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '4px' }} title={t('editTooltip')} onClick={() => handleStartEdit(item)}>
-                          <Edit2 size={14} />
-                        </button>
-                        <button style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', padding: '4px' }} title={t('deleteTooltip')} onClick={() => handleDelete(item)}>
-                          <Trash2 size={14} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-
-                  {item.image_path && (
-                    <div style={{ width: '200px', height: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                      {images[item.image_path] ? (
-                        <img src={images[item.image_path]} style={{ width: '100%', objectFit: 'contain' }} />
-                      ) : (
-                        <span style={{ opacity: 0.5, padding: '20px' }}>Loading...</span>
-                      )}
-                    </div>
-                  )}
-
-                  <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '4px', marginRight: '40px' }}>
-                    <div style={{ fontSize: '0.75rem', opacity: 0.5 }}>
-                      {new Date(item.timestamp).toLocaleString()} {item.image_path ? '' : '(Text Only)'}
-                    </div>
-                    {isEditing ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                        <textarea
-                          className="project-textarea"
-                          autoFocus
-                          style={{ minHeight: '80px', fontSize: '0.85rem' }}
-                          value={editingText}
-                          onChange={e => setEditingText(e.target.value)}
-                        />
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                          <button className="project-btn apply" onClick={() => handleSaveEdit(item)} disabled={isSavingEdit}>
-                            <Save size={14} style={{ marginRight: '4px' }} /> Save
-                          </button>
-                          <button className="project-btn add" onClick={handleCancelEdit} disabled={isSavingEdit}>
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: '0.85rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.9, marginTop: '4px' }}>
-                        {item.text || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>No text provided.</span>}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+            {historyItems.map((item) => (
+              <HistoryItemRow
+                key={item.json_path}
+                item={item}
+                isEditing={editingItemPath === item.json_path}
+                editingText={editingText}
+                isSavingEdit={isSavingEdit}
+                onStartEdit={handleStartEdit}
+                onSaveEdit={handleSaveEdit}
+                onCancelEdit={handleCancelEdit}
+                onDelete={handleDelete}
+                onEditingTextChange={setEditingText}
+                postedStatusLabel={t('postedStatus')}
+                editTooltip={t('editTooltip')}
+                deleteTooltip={t('deleteTooltip')}
+              />
+            ))}
           </div>
         </div>
       </div>

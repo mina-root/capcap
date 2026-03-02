@@ -339,6 +339,8 @@ struct CaptureData {
     timestamp: u64,
     #[serde(default)]
     discord_posted: bool,
+    #[serde(default)]
+    discord_message_id: Option<String>,
 }
 
 #[command]
@@ -366,6 +368,7 @@ fn save_capture_text(image_path: String, text: String) -> Result<String, String>
         text,
         timestamp,
         discord_posted: false,
+        discord_message_id: None,
     };
 
     let json_content = serde_json::to_string_pretty(&data)
@@ -397,6 +400,7 @@ fn save_text_only(project_dir: String, text: String) -> Result<String, String> {
         text,
         timestamp,
         discord_posted: false,
+        discord_message_id: None,
     };
     
     let json_content = serde_json::to_string_pretty(&data)
@@ -433,6 +437,56 @@ fn update_capture_text(json_path: String, new_text: String) -> Result<(), String
 }
 
 #[command]
+async fn edit_discord_message(webhook_url: String, message_id: String, text: String, thread_id: Option<String>) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let mut url = format!("{}/messages/{}", webhook_url, message_id);
+    
+    if let Some(t_id) = thread_id {
+        if !t_id.is_empty() {
+            url.push_str(&format!("?thread_id={}", t_id));
+        }
+    }
+
+    let mut map = std::collections::HashMap::new();
+    map.insert("content", text);
+
+    let res = client.patch(&url)
+        .json(&map)
+        .send()
+        .await
+        .map_err(|e| format!("Discordメッセージの編集に失敗しました: {}", e))?;
+
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Discordからエラーが返されました: {}", res.status()))
+    }
+}
+
+#[command]
+async fn delete_discord_message(webhook_url: String, message_id: String, thread_id: Option<String>) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let mut url = format!("{}/messages/{}", webhook_url, message_id);
+    
+    if let Some(t_id) = thread_id {
+        if !t_id.is_empty() {
+            url.push_str(&format!("?thread_id={}", t_id));
+        }
+    }
+
+    let res = client.delete(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Discordメッセージの削除に失敗しました: {}", e))?;
+
+    if res.status().is_success() || res.status() == reqwest::StatusCode::NOT_FOUND {
+        Ok(())
+    } else {
+        Err(format!("Discordからエラーが返されました: {}", res.status()))
+    }
+}
+
+#[command]
 fn delete_capture_item(image_path: String, json_path: String) -> Result<(), String> {
     let i_path = PathBuf::from(&image_path);
     if !image_path.is_empty() && i_path.exists() {
@@ -455,6 +509,7 @@ struct HistoryItem {
     text: String,
     timestamp: u64,
     discord_posted: bool,
+    discord_message_id: Option<String>,
 }
 
 #[command]
@@ -480,6 +535,7 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                     let mut text = String::new();
                     let mut timestamp = 0;
                     let mut discord_posted = false;
+                    let mut discord_message_id = None;
 
                     if json_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&json_path) {
@@ -487,6 +543,7 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                                 text = data.text;
                                 timestamp = data.timestamp;
                                 discord_posted = data.discord_posted;
+                                discord_message_id = data.discord_message_id;
                             }
                         }
                     } else {
@@ -497,14 +554,15 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                             .unwrap_or(0);
                     }
 
-                    history.push(HistoryItem {
-                        image_path: path.to_string_lossy().into_owned(),
-                        json_path: json_path.to_string_lossy().into_owned(),
-                        image_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
-                        text,
-                        timestamp,
-                        discord_posted,
-                    });
+                        history.push(HistoryItem {
+                            image_path: path.to_string_lossy().into_owned(),
+                            json_path: json_path.to_string_lossy().into_owned(),
+                            image_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                            text,
+                            timestamp,
+                            discord_posted,
+                            discord_message_id,
+                        });
                 } else if ext == Some("json") {
                     // txt-only case or standalone json. If it corresponds to a PNG, it's already handled.
                     // We check if image is empty to treat as text-only.
@@ -522,6 +580,7 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                                     text: data.text,
                                     timestamp: data.timestamp,
                                     discord_posted: data.discord_posted,
+                                    discord_message_id: data.discord_message_id,
                                 });
                             }
                         }
@@ -538,7 +597,7 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
 }
 
 #[command]
-fn mark_discord_posted(json_path: String) -> Result<(), String> {
+fn mark_discord_posted(json_path: String, message_id: Option<String>) -> Result<(), String> {
     let path = PathBuf::from(&json_path);
 
     let mut data: CaptureData = if path.exists() {
@@ -561,10 +620,12 @@ fn mark_discord_posted(json_path: String) -> Result<(), String> {
             text: "".to_string(),
             timestamp,
             discord_posted: false,
+            discord_message_id: None,
         }
     };
 
     data.discord_posted = true;
+    data.discord_message_id = message_id;
 
     let json_content = serde_json::to_string_pretty(&data)
         .map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
@@ -576,7 +637,7 @@ fn mark_discord_posted(json_path: String) -> Result<(), String> {
 }
 
 #[command]
-async fn post_to_discord(webhook_url: String, text: String, image_path: String, thread_id: Option<String>) -> Result<(), String> {
+async fn post_to_discord(webhook_url: String, text: String, image_path: String, thread_id: Option<String>) -> Result<String, String> {
     let client = reqwest::Client::new();
     let mut form = reqwest::multipart::Form::new();
     
@@ -601,13 +662,13 @@ async fn post_to_discord(webhook_url: String, text: String, image_path: String, 
     let mut url = webhook_url;
     if let Some(t_id) = thread_id {
         if !t_id.is_empty() {
-            if url.contains('?') {
-                url.push_str(&format!("&thread_id={}", t_id));
-            } else {
-                url.push_str(&format!("?thread_id={}", t_id));
-            }
+            let sep = if url.contains('?') { "&" } else { "?" };
+            url.push_str(&format!("{}thread_id={}", sep, t_id));
         }
     }
+    
+    let sep = if url.contains('?') { "&" } else { "?" };
+    url.push_str(&format!("{}wait=true", sep));
 
     // Send
     let res = client.post(&url)
@@ -617,7 +678,13 @@ async fn post_to_discord(webhook_url: String, text: String, image_path: String, 
         .map_err(|e| format!("Webhook送信に失敗しました: {}", e))?;
 
     if res.status().is_success() {
-        Ok(())
+        let body = res.text().await.map_err(|e| format!("レスポンスボディの取得に失敗しました: {}", e))?;
+        let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("レスポンスのパースに失敗しました: {}", e))?;
+        if let Some(id) = v["id"].as_str() {
+            Ok(id.to_string())
+        } else {
+            Ok("".to_string())
+        }
     } else {
         Err(format!("Discordからエラーが返されました: {}", res.status()))
     }
@@ -654,7 +721,9 @@ pub fn run() {
             update_capture_text,
             delete_capture_item,
             mark_discord_posted,
-            post_to_discord
+            post_to_discord,
+            edit_discord_message,
+            delete_discord_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
