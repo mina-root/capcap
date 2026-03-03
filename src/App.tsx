@@ -174,17 +174,18 @@ function MainApp() {
     };
   }, []); // 依存関係なしで一度だけ実行
 
-  // ─ Keyboard shortcut: Ctrl+Shift+S ─
+  // ─ Prevent Default Browser Shortcuts (like Print for Ctrl+P) ─
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyS') {
+      // Prevent Print dialog that freezes Tauri app
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'p')) {
         e.preventDefault();
-        handleCapture();
+        // Option: toggleProjectMenu();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedWindow]);
+  }, []);
 
   const handleClose = async () => {
     try {
@@ -534,14 +535,14 @@ function MainApp() {
             <GripHorizontal />
           </div>
 
-          <div className="dock-item" title={t('projectsTooltip')} onClick={toggleProjectMenu} style={{
+          <div className="dock-item" title={activeProject ? `${t('projectsTooltip')}: ${activeProject.name}` : t('projectsTooltip')} onClick={toggleProjectMenu} style={{
             background: isProjectMenuOpen ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
             color: activeProject ? '#a78bfa' : 'inherit'
           }}>
             <FolderKanban />
           </div>
 
-          <div className="dock-item" title={t('selectWindowTooltip')} onClick={toggleWindowMenu} style={{
+          <div className="dock-item" title={selectedWindow ? `${t('selectWindowTooltip')}: ${selectedWindow.title}` : t('selectWindowTooltip')} onClick={toggleWindowMenu} style={{
             background: isWindowMenuOpen ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
             color: selectedWindow && selectedWindow.hwnd !== 0 ? '#60a5fa' : 'inherit'
           }}>
