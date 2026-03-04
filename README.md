@@ -1,73 +1,49 @@
-# React + TypeScript + Vite
+# capcap 📸
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+capcapは、開発中のゲームやアプリケーションのスクリーンショットを素早く撮影し、ノートを添えてプロジェクトごとに管理したり、DiscordやNotionに簡単に共有したりするためのツールです。
 
-Currently, two official plugins are available:
+## 主な機能
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **スクリーンショット撮影**:アクティブなウィンドウまたは指定したウィンドウのスクリーンショットを即座に撮影。
+- **テキストノート**: 画像なしのテキストだけのメモも保存可能。
+- **プロジェクト管理**: 撮影した内容はプロジェクトごとに分類して保存されます。
+- **履歴管理**: 過去のキャプチャを一覧表示し、後から編集や再投稿が可能。
+- **Discord連携**: Webhookを使用して、特定のチャンネルやスレッドにキャプチャとメッセージを自動・手動で投稿。
+- **Notion連携**: Notion APIを使用して、特定のページにキャプチャとテキストを追加。
+- **多言語対応**: 日本語と英語の表示に対応。
 
-## React Compiler
+## 使い方
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. **アプリの起動**: ツールバーが表示されるので、使いやすい位置にドラッグして配置します。
+2. **プロジェクト作成**: 「プロジェクト」アイコンから、新しいプロジェクトを作成します。
+3. **ウィンドウ選択**: 「ターゲットウィンドウ選択」アイコンをクリックして、キャプチャしたいウィンドウを選びます。「自動」にすると、現在アクティブなウィンドウをキャプチャします。
+4. **撮影**: 「スクリーンショット撮影」アイコンをクリックすると撮影されます。
+5. **プレビューと投稿**: プレビュー画面が表示されるので、タイトルやメモを入力して「送信」または「保存」します。設定で「自動投稿」を有効にしている場合は、すぐにDiscordまたはNotionに投稿されます。
+6. **編集**: 投稿した内容は「履歴」アイコンから編集できます。編集・削除はDiscordやNotionの投稿内容にも反映されます。
 
-## Expanding the ESLint configuration
+## 設定（ID周りの取得方法）
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+連携機能を使用するには、以下の設定が必要です。
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### Discord設定
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+1. **Discord Webhook URL**:
+   - 投稿したいチャンネルの設定（歯車アイコン）> 「連携サービス」 > 「ウェブフック」 を開きます。
+   - 「ウェブフックを作成」をクリックし、「ウェブフック URL をコピー」で取得したURLをアプリの「設定」に入力します。
+2. **Discord スレッド ID**:
+   - 特定のスレッドに投稿したい場合、スレッドを右クリック > 「IDをコピー」で取得したIDを**プロジェクト設定**の「Discord スレッド ID」に入力します。
+   - ※「IDをコピー」が表示されない場合は、Discordの設定 > 詳細設定 > 開発者モード をONにしてください。
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+### Notion設定
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+1. **Notion API トークン**:
+   - [内部インテグレーション](https://www.notion.so/profile/integrations/internal) にアクセスし、新しい内部インテグレーションを作成します。
+   - 「シークレット」をコピーして、アプリの「設定」の「Notion API トークン」に入力します。
+2. **Notion ページ ID**:
+   - 投稿先となる親ページ（またはデータベース）を開き、ブラウザのURLからIDを取得します。
+   - URLが `https://www.notion.so/my-workspace/Page-Title-abc123456789...` の場合、末尾の `abc123456789...` 部分（32文字の英数字）がページIDです。
+   - これを**プロジェクト設定**の「Notion ページ ID」に入力します（URLをそのまま貼り付けても大丈夫です）。
+3. **ページへのアクセス許可**:
+   - Notionの対象ページで「共有」ボタンを押し、作成したインテグレーション（上記手順1で作成したもの）を招待して追加してください。これによりアプリからの投稿が可能になります。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
