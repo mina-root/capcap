@@ -51,9 +51,9 @@ export const translations = {
         saveAndClose: "Save & Close",
 
         // History Menu
-        historyTitle: "Project History",
+        historyTitle: "History",
         noHistory: "No history for this project yet.",
-        batchPost: "Batch Post to Discord",
+        batchPost: "Batch Post",
         batchPostDesc: "Post all unposted captures to Discord",
         deleteTooltip: "Delete",
         editTooltip: "Edit",
@@ -61,7 +61,7 @@ export const translations = {
         cancelTooltip: "Cancel",
         postToDiscordTooltip: "Post to Discord",
         postToNotionTooltip: "Post to Notion",
-        batchPostNotion: "Batch Post to Notion",
+        batchPostNotion: "Batch Post",
         batchPostNotionDesc: "Post all unposted captures to Notion",
         postedStatus: "Posted",
 
@@ -75,7 +75,8 @@ export const translations = {
         discordWebhookUrlDesc: "Enter the webhook URL where captures should be posted. Include thread_id query parameters if you want to post to a specific thread.",
         notionApiToken: "Notion API Token",
         notionApiTokenDesc: "Enter your Notion API Integration Token.",
-        enableAutoPost: "Enable Automatic Posting",
+        enableDiscordAutoPost: "Enable Discord Auto-post",
+        enableNotionAutoPost: "Enable Notion Auto-post",
         saveSettings: "Save Settings",
         globalShortcut: "Capture Hotkey",
         globalShortcutDesc: "Global hotkey shortcut to capture screen (e.g. CommandOrControl+Shift+S)",
@@ -130,9 +131,9 @@ export const translations = {
         saveAndClose: "保存して閉じる",
 
         // History Menu
-        historyTitle: "プロジェクト履歴",
+        historyTitle: "履歴",
         noHistory: "このプロジェクトの履歴はまだありません。",
-        batchPost: "Discordに一括投稿",
+        batchPost: "一括投稿",
         batchPostDesc: "未投稿のキャプチャをすべてDiscordに投稿します",
         deleteTooltip: "削除",
         editTooltip: "編集",
@@ -140,7 +141,7 @@ export const translations = {
         cancelTooltip: "キャンセル",
         postToDiscordTooltip: "Discordに投稿",
         postToNotionTooltip: "Notionに投稿",
-        batchPostNotion: "Notionに一括投稿",
+        batchPostNotion: "一括投稿",
         batchPostNotionDesc: "未投稿のキャプチャをすべてNotionに投稿します",
         postedStatus: "投稿済み",
 
@@ -154,7 +155,8 @@ export const translations = {
         discordWebhookUrlDesc: "キャプチャを投稿するWebhook URLを入力してください。特定の形式のスレッドに投稿する場合はthread_idパラメータを含めてください。",
         notionApiToken: "Notion API トークン",
         notionApiTokenDesc: "Notion APIのインテグレーショントークンを入力してください。",
-        enableAutoPost: "自動投稿を有効にする",
+        enableDiscordAutoPost: "Discordへの自動投稿を有効にする",
+        enableNotionAutoPost: "Notionへの自動投稿を有効にする",
         saveSettings: "設定を保存",
         globalShortcut: "キャプチャショートカット",
         globalShortcutDesc: "画面キャプチャのグローバルショートカット (例: CommandOrControl+Shift+S)",

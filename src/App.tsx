@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { FolderKanban, GripHorizontal, Image as ImageIcon, Maximize, Settings, X, RefreshCw, Camera, Plus, Check, FileText, ScrollText, FileEdit, Trash2, Edit2, Save, Send } from 'lucide-react';
+import { FolderKanban, GripHorizontal, Image as ImageIcon, Maximize, Settings, X, RefreshCw, Camera, Plus, Check, FileText, ScrollText, FileEdit, Trash2, Edit2, Save } from 'lucide-react';
 import { getCurrentWindow, currentMonitor, getAllWindows } from '@tauri-apps/api/window';
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
@@ -7,6 +7,9 @@ import { listen, emit, emitTo } from '@tauri-apps/api/event';
 import { appDataDir } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
 import './index.css';
+
+import discordIcon from './assets/Discord-Symbol-Blurple.svg';
+import notionIcon from './assets/notion-logo.svg';
 
 import {
   STORAGE_KEYS,
@@ -29,6 +32,7 @@ export interface ProjectInfo {
   created_at: number;
   dir_path: string;
   discord_thread_id?: string;
+  notion_page_id?: string;
 }
 
 // ─── MAIN DOCK ───────────────────────────────────────────────────────────────
@@ -694,6 +698,7 @@ function ProjectMenuPopup() {
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [projectText, setProjectText] = useState('');
   const [discordThreadId, setDiscordThreadId] = useState('');
+  const [notionPageId, setNotionPageId] = useState('');
   const [isSavingText, setIsSavingText] = useState(false);
 
   const getProjectsRoot = async () => {
@@ -741,6 +746,7 @@ function ProjectMenuPopup() {
     setSelectedProject(p);
     setProjectText(p.text);
     setDiscordThreadId(p.discord_thread_id || '');
+    setNotionPageId(p.notion_page_id || '');
   };
 
   const activateProject = async (p: ProjectInfo) => {
@@ -772,7 +778,7 @@ function ProjectMenuPopup() {
     if (!selectedProject) return;
     setIsSavingText(true);
     try {
-      const updatedInfo = { ...selectedProject, text: projectText, discord_thread_id: discordThreadId };
+      const updatedInfo = { ...selectedProject, text: projectText, discord_thread_id: discordThreadId, notion_page_id: notionPageId };
       await invoke('update_project', {
         project: updatedInfo
       });
@@ -886,6 +892,18 @@ function ProjectMenuPopup() {
                       style={{ flex: 1, height: '30px', fontSize: '0.85rem' }}
                     />
                   </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                    <span style={{ fontSize: '0.8rem', opacity: 0.8, whiteSpace: 'nowrap' }}>{t('notionPageId')}:</span>
+                    <input
+                      type="text"
+                      className="project-input"
+                      value={notionPageId}
+                      onChange={(e) => setNotionPageId(e.target.value)}
+                      onBlur={handleUpdateText}
+                      placeholder="Optional"
+                      style={{ flex: 1, height: '30px', fontSize: '0.85rem' }}
+                    />
+                  </div>
                 </div>
               </>
             ) : (
@@ -972,25 +990,57 @@ function CapturePreviewPopup() {
       }
 
       // Auto-post if enabled
-      const autoPostEnabled = localStorage.getItem('discordAutoPost') === 'true';
-      const webhookUrl = localStorage.getItem('discordWebhookUrl');
-      if (autoPostEnabled && webhookUrl) {
-        try {
-          const messageId: string = await invoke('post_to_discord', {
-            webhookUrl,
-            text: text,
-            imagePath: imagePath || '',
-            threadId: project.discord_thread_id || null
-          });
+      const discordAutoPost = localStorage.getItem('discordAutoPost') === 'true';
+      const notionAutoPost = localStorage.getItem('notionAutoPost') === 'true';
 
-          if (savedJsonPath) {
-            await invoke('mark_discord_posted', {
-              jsonPath: savedJsonPath,
-              messageId: messageId || null
+      const webhookUrl = localStorage.getItem('discordWebhookUrl');
+      const notionToken = localStorage.getItem('notionApiToken');
+
+      if (discordAutoPost) {
+        if (webhookUrl) {
+          try {
+            const messageId: string = await invoke('post_to_discord', {
+              webhookUrl,
+              text: text,
+              imagePath: imagePath || '',
+              threadId: project.discord_thread_id || null
             });
+
+            if (savedJsonPath) {
+              await invoke('mark_discord_posted', {
+                jsonPath: savedJsonPath,
+                messageId: messageId || null
+              });
+            }
+          } catch (postErr) {
+            console.error("Failed to auto-post to Discord:", postErr);
           }
-        } catch (postErr) {
-          console.error("Failed to auto-post after save", postErr);
+        }
+      }
+
+      if (notionAutoPost) {
+        if (notionToken && project.notion_page_id) {
+          try {
+            const blockId: string = await invoke('post_to_notion', {
+              notionApiToken: notionToken,
+              pageId: project.notion_page_id,
+              text: text,
+              imagePath: imagePath || ''
+            });
+
+            if (savedJsonPath) {
+              await invoke('mark_notion_posted', {
+                jsonPath: savedJsonPath,
+                blockId: blockId || null
+              });
+            }
+            console.log("Notion auto-post successful:", blockId);
+          } catch (notionErr) {
+            console.error("Failed to auto-post to Notion:", notionErr);
+            alert(`Notion Auto-post Error: ${notionErr}`);
+          }
+        } else {
+          console.log("Notion auto-post skipped: Missing token or pageId", { hasToken: !!notionToken, pageId: project.notion_page_id });
         }
       }
 
@@ -1091,6 +1141,8 @@ interface HistoryItem {
   timestamp: number;
   discord_posted?: boolean;
   discord_message_id?: string;
+  notion_posted?: boolean;
+  notion_block_id?: string;
 }
 
 // ─── HISTORY ITEM ROW (Lazy Image Loading) ───────────────────────────────────
@@ -1170,9 +1222,14 @@ function HistoryItemRow({
     >
       {/* Action buttons */}
       <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+        {item.notion_posted && !isEditing && (
+          <div title={postedStatusLabel} style={{ display: 'flex', alignItems: 'center' }}>
+            <img src={notionIcon} style={{ width: '16px', height: '16px' }} alt="Notion" />
+          </div>
+        )}
         {item.discord_posted && !isEditing && (
-          <div title={postedStatusLabel} style={{ color: '#5865F2', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
-            <Check size={16} />
+          <div title={postedStatusLabel} style={{ display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+            <img src={discordIcon} style={{ width: '16px', height: '16px' }} alt="Discord" />
           </div>
         )}
         {isEditing ? null : (
@@ -1315,6 +1372,19 @@ function HistoryMenuPopup() {
           }
         }
       }
+      if (item.notion_posted && item.notion_block_id) {
+        const notionToken = localStorage.getItem('notionApiToken');
+        if (notionToken) {
+          try {
+            await invoke('delete_notion_block', {
+              notionApiToken: notionToken,
+              blockId: item.notion_block_id
+            });
+          } catch (notionErr) {
+            console.error("Failed to delete Notion block", notionErr);
+          }
+        }
+      }
       await invoke('delete_capture_item', { imagePath: item.image_path, jsonPath: item.json_path });
       loadHistory(projectRef.current);
     } catch (e) {
@@ -1343,6 +1413,21 @@ function HistoryMenuPopup() {
             });
           } catch (discordErr) {
             console.error("Failed to sync edit with Discord", discordErr);
+          }
+        }
+      }
+
+      if (item.notion_posted && item.notion_block_id) {
+        const notionToken = localStorage.getItem('notionApiToken');
+        if (notionToken) {
+          try {
+            await invoke('edit_notion_block', {
+              notionApiToken: notionToken,
+              blockId: item.notion_block_id,
+              text: editingText
+            });
+          } catch (notionErr) {
+            console.error("Failed to sync edit with Notion", notionErr);
           }
         }
       }
@@ -1403,6 +1488,59 @@ function HistoryMenuPopup() {
     }
   };
 
+  const handleBatchPostNotion = async () => {
+    console.log("handleBatchPostNotion started");
+    if (!projectRef.current) {
+      console.log("No active project");
+      return;
+    }
+    const proj = projectRef.current;
+    const notionToken = localStorage.getItem('notionApiToken');
+    if (!notionToken || !proj.notion_page_id) {
+      const msg = `Notion Configuration Missing: Token=${!!notionToken}, PageID=${proj.notion_page_id}`;
+      console.error(msg);
+      alert(msg);
+      return;
+    }
+
+    const unpostedItems = historyItems.filter(i => !i.notion_posted);
+    console.log(`Unposted Notion items count: ${unpostedItems.length}`);
+    if (unpostedItems.length === 0) {
+      alert("No new items to post to Notion.");
+      return;
+    }
+
+    setIsBatchPosting(true);
+    try {
+      for (let i = unpostedItems.length - 1; i >= 0; i--) {
+        const item = unpostedItems[i];
+        console.log(`Posting item to Notion: ${item.image_name || 'text-only'}`);
+        const blockId: string = await invoke('post_to_notion', {
+          notionApiToken: notionToken,
+          pageId: proj.notion_page_id,
+          text: item.text || '',
+          imagePath: item.image_path || ''
+        });
+        console.log(`Post success, blockId: ${blockId}. Marking as posted...`);
+        await invoke('mark_notion_posted', {
+          jsonPath: item.json_path,
+          blockId: blockId || null
+        });
+
+        if (i !== 0) {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      await loadHistory(proj);
+    } catch (e) {
+      console.error("Batch post to Notion failed:", e);
+      alert(`Batch post error: ${e}`);
+    } finally {
+      setIsBatchPosting(false);
+    }
+  };
+
   return (
     <div style={{ width: '100%', height: '100%', padding: '10px' }}>
       <div className={`liquidGlass-wrapper window-popup ${direction}`} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -1416,14 +1554,26 @@ function HistoryMenuPopup() {
               {project ? `${t('historyTitle')}: ${project.name}` : t('historyTitle')}
             </span>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              {project && historyItems.some(i => !i.notion_posted) && (
+                <button
+                  className="project-btn apply"
+                  onClick={handleBatchPostNotion}
+                  disabled={isBatchPosting}
+                  style={{ padding: '6px 12px', fontSize: '0.8rem', background: 'rgba(255,255,255,0.08)', color: '#fff', display: 'flex', alignItems: 'center', border: '1px solid rgba(255,255,255,0.1)' }}
+                  title={t('batchPostNotionDesc')}
+                >
+                  <img src={notionIcon} style={{ width: '14px', height: '14px', marginRight: '6px' }} alt="Notion" />
+                  {isBatchPosting ? t('posting') : t('batchPostNotion')}
+                </button>
+              )}
               {project && historyItems.some(i => !i.discord_posted) && (
                 <button
                   className="project-btn apply"
                   onClick={handleBatchPost}
                   disabled={isBatchPosting}
-                  style={{ padding: '4px 12px', fontSize: '0.8rem' }}
+                  style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center' }}
                 >
-                  <Send size={14} style={{ marginRight: '6px' }} />
+                  <img src={discordIcon} style={{ width: '14px', height: '14px', marginRight: '6px', filter: 'brightness(10)' }} alt="Discord" />
                   {isBatchPosting ? t('posting') : t('batchPost')}
                 </button>
               )}
@@ -1500,7 +1650,9 @@ function SettingsMenuPopup() {
   const { lang, changeLanguage, t } = useLanguage();
   const [direction, setDirection] = useState<'up' | 'down'>('up');
   const [webhookUrl, setWebhookUrl] = useState('');
-  const [autoPost, setAutoPost] = useState(false);
+  const [discordAutoPost, setDiscordAutoPost] = useState(false);
+  const [notionAutoPost, setNotionAutoPost] = useState(false);
+  const [notionApiToken, setNotionApiToken] = useState('');
   const [projectsRoot, setProjectsRoot] = useState('');
 
   useEffect(() => {
@@ -1512,8 +1664,14 @@ function SettingsMenuPopup() {
     const savedUrl = localStorage.getItem('discordWebhookUrl');
     if (savedUrl) setWebhookUrl(savedUrl);
 
-    const savedAuto = localStorage.getItem('discordAutoPost');
-    if (savedAuto) setAutoPost(savedAuto === 'true');
+    const savedToken = localStorage.getItem('notionApiToken');
+    if (savedToken) setNotionApiToken(savedToken);
+
+    const savedDiscordAuto = localStorage.getItem('discordAutoPost');
+    if (savedDiscordAuto) setDiscordAutoPost(savedDiscordAuto === 'true');
+
+    const savedNotionAuto = localStorage.getItem('notionAutoPost');
+    if (savedNotionAuto) setNotionAutoPost(savedNotionAuto === 'true');
 
     const loadProjectsRoot = async () => {
       const savedRoot = localStorage.getItem(STORAGE_KEYS.PROJECTS_ROOT);
@@ -1547,7 +1705,9 @@ function SettingsMenuPopup() {
 
   const handleSave = () => {
     localStorage.setItem('discordWebhookUrl', webhookUrl);
-    localStorage.setItem('discordAutoPost', autoPost ? 'true' : 'false');
+    localStorage.setItem('notionApiToken', notionApiToken);
+    localStorage.setItem('discordAutoPost', discordAutoPost ? 'true' : 'false');
+    localStorage.setItem('notionAutoPost', notionAutoPost ? 'true' : 'false');
     localStorage.setItem(STORAGE_KEYS.PROJECTS_ROOT, projectsRoot);
     // Notify MainApp of settings change so interval runs with latest
     emitTo('main', 'settings-updated');
@@ -1613,17 +1773,48 @@ function SettingsMenuPopup() {
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 500, opacity: 0.9 }}>{t('notionApiToken')}</label>
               <input
-                type="checkbox"
-                id="autoPost"
-                checked={autoPost}
-                onChange={e => setAutoPost(e.target.checked)}
-                style={{ cursor: 'pointer' }}
+                type="password"
+                className="project-input"
+                placeholder="secret_..."
+                value={notionApiToken}
+                onChange={e => setNotionApiToken(e.target.value)}
               />
-              <label htmlFor="autoPost" style={{ fontSize: '0.85rem', fontWeight: 500, cursor: 'pointer' }}>
-                {t('enableAutoPost')}
-              </label>
+              <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>
+                {t('notionApiTokenDesc')}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="checkbox"
+                  id="discordAutoPost"
+                  checked={discordAutoPost}
+                  onChange={e => setDiscordAutoPost(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                <img src={discordIcon} style={{ width: '16px', height: '16px' }} alt="Discord" />
+                <label htmlFor="discordAutoPost" style={{ fontSize: '0.85rem', fontWeight: 500, cursor: 'pointer' }}>
+                  {t('enableDiscordAutoPost')}
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="checkbox"
+                  id="notionAutoPost"
+                  checked={notionAutoPost}
+                  onChange={e => setNotionAutoPost(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                <img src={notionIcon} style={{ width: '16px', height: '16px' }} alt="Notion" />
+                <label htmlFor="notionAutoPost" style={{ fontSize: '0.85rem', fontWeight: 500, cursor: 'pointer' }}>
+                  {t('enableNotionAutoPost')}
+                </label>
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

@@ -24,7 +24,8 @@ log = "0.4"
 tauri = { version = "2.10.0", features = [] }
 tauri-plugin-log = "2"
 windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Graphics_Gdi", "Win32_Storage_Xps"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 window-vibrancy = "0.7.1"
 reqwest = { version = "0.12", features = ["multipart", "json"] }
 tauri-plugin-dialog = "2.3.0"
+tokio = "1.50.0"

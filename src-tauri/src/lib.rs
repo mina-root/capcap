@@ -245,6 +245,8 @@ pub struct ProjectInfo {
     pub dir_path: String,
     #[serde(default)]
     pub discord_thread_id: Option<String>,
+    #[serde(default)]
+    pub notion_page_id: Option<String>,
 }
 
 #[command]
@@ -302,6 +304,7 @@ fn create_project(app_data_dir: String, name: String, text: String) -> Result<Pr
         created_at: timestamp,
         dir_path: target_dir.to_string_lossy().into_owned(),
         discord_thread_id: None,
+        notion_page_id: None,
     };
     
     // JSON保存
@@ -341,6 +344,10 @@ struct CaptureData {
     discord_posted: bool,
     #[serde(default)]
     discord_message_id: Option<String>,
+    #[serde(default)]
+    notion_posted: bool,
+    #[serde(default)]
+    notion_block_id: Option<String>,
 }
 
 #[command]
@@ -369,6 +376,8 @@ fn save_capture_text(image_path: String, text: String) -> Result<String, String>
         timestamp,
         discord_posted: false,
         discord_message_id: None,
+        notion_posted: false,
+        notion_block_id: None,
     };
 
     let json_content = serde_json::to_string_pretty(&data)
@@ -401,6 +410,8 @@ fn save_text_only(project_dir: String, text: String) -> Result<String, String> {
         timestamp,
         discord_posted: false,
         discord_message_id: None,
+        notion_posted: false,
+        notion_block_id: None,
     };
     
     let json_content = serde_json::to_string_pretty(&data)
@@ -510,6 +521,8 @@ struct HistoryItem {
     timestamp: u64,
     discord_posted: bool,
     discord_message_id: Option<String>,
+    notion_posted: bool,
+    notion_block_id: Option<String>,
 }
 
 #[command]
@@ -536,6 +549,8 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                     let mut timestamp = 0;
                     let mut discord_posted = false;
                     let mut discord_message_id = None;
+                    let mut notion_posted = false;
+                    let mut notion_block_id = None;
 
                     if json_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&json_path) {
@@ -544,6 +559,8 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                                 timestamp = data.timestamp;
                                 discord_posted = data.discord_posted;
                                 discord_message_id = data.discord_message_id;
+                                notion_posted = data.notion_posted;
+                                notion_block_id = data.notion_block_id;
                             }
                         }
                     } else {
@@ -562,6 +579,8 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                             timestamp,
                             discord_posted,
                             discord_message_id,
+                            notion_posted,
+                            notion_block_id,
                         });
                 } else if ext == Some("json") {
                     // txt-only case or standalone json. If it corresponds to a PNG, it's already handled.
@@ -581,6 +600,8 @@ fn get_project_captures(project_dir: String) -> Result<Vec<HistoryItem>, String>
                                     timestamp: data.timestamp,
                                     discord_posted: data.discord_posted,
                                     discord_message_id: data.discord_message_id,
+                                    notion_posted: data.notion_posted,
+                                    notion_block_id: data.notion_block_id,
                                 });
                             }
                         }
@@ -621,6 +642,8 @@ fn mark_discord_posted(json_path: String, message_id: Option<String>) -> Result<
             timestamp,
             discord_posted: false,
             discord_message_id: None,
+            notion_posted: false,
+            notion_block_id: None,
         }
     };
 
@@ -690,6 +713,282 @@ async fn post_to_discord(webhook_url: String, text: String, image_path: String, 
     }
 }
 
+pub fn compress_image(image_path: &str, max_bytes: u64) -> Result<String, String> {
+    let path = std::path::PathBuf::from(image_path);
+    let meta = std::fs::metadata(&path).map_err(|e| format!("ファイル情報取得失敗: {}", e))?;
+    if meta.len() <= max_bytes {
+        return Ok(image_path.to_string());
+    }
+
+    let img = image::open(&path).map_err(|e| format!("画像を開けませんでした: {}", e))?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp_path = std::env::temp_dir().join(format!("compressed_{}.jpg", timestamp));
+    
+    // Convert to RGB8 to allow JPEG saving without alpha channel
+    let img = img.into_rgb8();
+    
+    let mut out_file = std::fs::File::create(&temp_path)
+        .map_err(|e| format!("Temp file作成失敗: {}", e))?;
+    
+    // image 0.25 supports JpegEncoder
+    use image::codecs::jpeg::JpegEncoder;
+    let mut encoder = JpegEncoder::new_with_quality(&mut out_file, 80);
+    encoder.encode(&img, img.width(), img.height(), image::ColorType::Rgb8.into())
+        .map_err(|e| format!("JPEG圧縮失敗: {}", e))?;
+        
+    Ok(temp_path.to_string_lossy().to_string())
+}
+
+#[command]
+fn mark_notion_posted(json_path: String, block_id: Option<String>) -> Result<(), String> {
+    let path = PathBuf::from(&json_path);
+    if !path.exists() {
+        return Err("JSON File not found".to_string());
+    }
+
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("ファイル読み込みに失敗しました: {}", e))?;
+    let mut data: CaptureData = serde_json::from_str(&content)
+        .map_err(|e| format!("JSONのパースに失敗しました: {}", e))?;
+
+    data.notion_posted = true;
+    data.notion_block_id = block_id;
+
+    let json_content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("JSONのシリアライズに失敗しました: {}", e))?;
+        
+    std::fs::write(&path, json_content)
+        .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
+
+    Ok(())
+}
+
+#[command]
+async fn post_to_notion(notion_api_token: String, page_id: String, text: String, image_path: String) -> Result<String, String> {
+    let mut page_id = page_id.trim();
+    // If it looks like a URL, extract the last part (the ID)
+    if page_id.contains("notion.so/") {
+        if let Some(last_part) = page_id.split('/').last() {
+            // Remove any query params
+            page_id = last_part.split('?').next().unwrap_or(last_part);
+            // Some IDs are at the end of the URL like page-name-UUID
+            if let Some(pos) = page_id.rfind('-') {
+                let potential_uuid = &page_id[pos+1..];
+                if potential_uuid.len() >= 32 {
+                    page_id = potential_uuid;
+                }
+            }
+        }
+    }
+
+    if page_id.is_empty() {
+        return Err("Notion Page ID is empty".to_string());
+    }
+    log::info!("post_to_notion started. PageID: {}", page_id);
+    let client = reqwest::Client::new();
+    let notion_version = "2022-06-28";
+    let mut upload_id_to_attach = None;
+
+    if !image_path.is_empty() && PathBuf::from(&image_path).exists() {
+        log::info!("Processing image for Notion: {}", image_path);
+        // Notion free tier is 5MB
+        let final_image_path = compress_image(&image_path, 5 * 1024 * 1024)?;
+        let file_name = PathBuf::from(&final_image_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+
+        if let Ok(bytes) = std::fs::read(&final_image_path) {
+            let content_type = if file_name.to_lowercase().ends_with(".jpg") || file_name.to_lowercase().ends_with(".jpeg") {
+                "image/jpeg"
+            } else {
+                "image/png"
+            };
+
+            log::info!("Initiating Notion file upload (Step 1)... Filename: {}, Type: {}", file_name, content_type);
+            // STEP 1: Create File Upload Object
+            let upload_res = client.post("https://api.notion.com/v1/file_uploads")
+                .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", notion_api_token))
+                .header("Notion-Version", notion_version)
+                .json(&serde_json::json!({
+                    "filename": file_name,
+                    "content_type": content_type
+                }))
+                .send()
+                .await
+                .map_err(|e| format!("Notion Upload APIの呼び出しに失敗: {}", e))?;
+
+            if upload_res.status().is_success() {
+                let upload_body: serde_json::Value = upload_res.json().await.map_err(|_| "Invalid JSON from Notion".to_string())?;
+                if let (Some(upload_id), Some(upload_url)) = (upload_body["id"].as_str(), upload_body["upload_url"].as_str()) {
+                    log::info!("Uploading file contents to Notion (Step 2)... ID: {}", upload_id);
+                    // STEP 2: Send File Content
+                    let part = reqwest::multipart::Part::bytes(bytes)
+                        .file_name(file_name)
+                        .mime_str(content_type)
+                        .map_err(|e| format!("Invalid MIME type: {}", e))?;
+                    let form = reqwest::multipart::Form::new().part("file", part);
+                    
+                    let send_res = client.post(upload_url)
+                        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", notion_api_token))
+                        .header("Notion-Version", notion_version)
+                        .multipart(form)
+                        .send()
+                        .await
+                        .map_err(|e| format!("Notionへの実ファイルアップロードに失敗: {}", e))?;
+
+                    if send_res.status().is_success() {
+                        upload_id_to_attach = Some(upload_id.to_string());
+                    } else {
+                        let text = send_res.text().await.unwrap_or_default();
+                        return Err(format!("Notion File Upload Step 2 failed: {}", text));
+                    }
+                }
+            } else {
+                let status = upload_res.status();
+                let err_text = upload_res.text().await.unwrap_or_default();
+                return Err(format!("Notion File Upload Step 1 failed: Status={}, Body={}", status, err_text));
+            }
+        }
+        
+        // Cleanup temp file if it was compressed
+        if final_image_path != image_path {
+            let _ = std::fs::remove_file(&final_image_path);
+        }
+    }
+
+    // STEP 3: Append Block Children
+    let mut children = Vec::new();
+    
+    if let Some(uid) = upload_id_to_attach {
+        children.push(serde_json::json!({
+            "object": "block",
+            "type": "image",
+            "image": {
+                "type": "file_upload",
+                "file_upload": {
+                    "id": uid
+                }
+            }
+        }));
+    }
+
+    let rich_text = if text.is_empty() {
+        vec![]
+    } else {
+        vec![serde_json::json!({
+            "type": "text",
+            "text": { "content": text }
+        })]
+    };
+
+    children.push(serde_json::json!({
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": rich_text
+        }
+    }));
+
+    if children.is_empty() {
+        log::info!("No children to append to Notion block.");
+        return Ok("".to_string());
+    }
+
+    log::info!("Appending blocks to Notion page... Total blocks: {}", children.len());
+    let append_res = client.patch(format!("https://api.notion.com/v1/blocks/{}/children", page_id))
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", notion_api_token))
+        .header("Notion-Version", notion_version)
+        .json(&serde_json::json!({
+            "children": children
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Notion Append Block API呼び出し失敗: {}", e))?;
+
+    if append_res.status().is_success() {
+         let body: serde_json::Value = append_res.json().await.unwrap_or_default();
+         let mut ids = Vec::new();
+         if let Some(arr) = body["results"].as_array() {
+             for res in arr {
+                 if let Some(id) = res["id"].as_str() {
+                     ids.push(id.to_string());
+                 }
+             }
+         }
+         Ok(ids.join(","))
+    } else {
+         let text = append_res.text().await.unwrap_or_default();
+         Err(format!("Notionからエラーが返されました: {}", text))
+    }
+}
+
+#[command]
+async fn delete_notion_block(notion_api_token: String, block_id: String) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let ids: Vec<&str> = block_id.split(',').filter(|s| !s.trim().is_empty()).collect();
+    
+    let mut last_err = None;
+    for id in ids {
+        let res = client.delete(&format!("https://api.notion.com/v1/blocks/{}", id))
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", notion_api_token))
+            .header("Notion-Version", "2022-06-28")
+            .send()
+            .await;
+            
+        if let Err(e) = res {
+            last_err = Some(e.to_string());
+        }
+    }
+
+    if let Some(e) = last_err {
+        Err(format!("Notion Block削除に一部失敗しました: {}", e))
+    } else {
+        Ok(())
+    }
+}
+
+#[command]
+async fn edit_notion_block(notion_api_token: String, block_id: String, text: String) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let ids: Vec<&str> = block_id.split(',').filter(|s| !s.trim().is_empty()).collect();
+    
+    // The text block is always the LAST block we appended.
+    let text_block_id = ids.last().ok_or("No block ID to edit")?;
+    
+    let rich_text = if text.is_empty() {
+        vec![]
+    } else {
+        vec![serde_json::json!({
+            "type": "text",
+            "text": { "content": text }
+        })]
+    };
+
+    let res = client.patch(&format!("https://api.notion.com/v1/blocks/{}", text_block_id))
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", notion_api_token))
+        .header("Notion-Version", "2022-06-28")
+        .json(&serde_json::json!({
+            "paragraph": {
+                "rich_text": rich_text
+            }
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Notion Block編集に失敗しました: {}", e))?;
+
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        let err_text = res.text().await.unwrap_or_default();
+        Err(format!("Notionからエラーが返されました: {}", err_text))
+    }
+}
+
 // ─── App entry ───────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -723,7 +1022,11 @@ pub fn run() {
             mark_discord_posted,
             post_to_discord,
             edit_discord_message,
-            delete_discord_message
+            delete_discord_message,
+            post_to_notion,
+            mark_notion_posted,
+            delete_notion_block,
+            edit_notion_block
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
