@@ -4,7 +4,7 @@ import { getCurrentWindow, currentMonitor, getAllWindows } from '@tauri-apps/api
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
-import { appDataDir } from '@tauri-apps/api/path';
+import { documentDir, join } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
 import './index.css';
 
@@ -121,7 +121,8 @@ function MainApp() {
   const getProjectsRoot = async () => {
     const saved = localStorage.getItem('projectsRoot');
     if (saved) return saved;
-    return await appDataDir();
+    const docDir = await documentDir();
+    return await join(docDir, 'CapCap');
   };
 
   const loadProjects = async () => {
@@ -704,7 +705,8 @@ function ProjectMenuPopup() {
   const getProjectsRoot = async () => {
     const saved = localStorage.getItem('projectsRoot');
     if (saved) return saved;
-    return await appDataDir();
+    const docDir = await documentDir();
+    return await join(docDir, 'CapCap');
   };
 
   const fetchProjects = async () => {
@@ -1678,7 +1680,8 @@ function SettingsMenuPopup() {
       if (savedRoot) {
         setProjectsRoot(savedRoot);
       } else {
-        setProjectsRoot(await appDataDir());
+        const docDir = await documentDir();
+        setProjectsRoot(await join(docDir, 'CapCap'));
       }
     };
     loadProjectsRoot();
