@@ -3,7 +3,7 @@
 capcapは、開発中のゲームやアプリケーションのスクリーンショットを素早く撮影し、ノートを添えてプロジェクトごとに管理したり、DiscordやNotionに簡単に共有したりするためのツールです。
 
 ## ダウンロード
-[ここからダウンロードできます](https://github.com/USER/REPO/releases/latest/) 
+[ここからダウンロードできます](https://github.com/mina-root/capcap/releases/latest/) 
 capcap.zipをDLして展開してください。
 
 ## 主な機能
