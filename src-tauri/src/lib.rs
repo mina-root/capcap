@@ -350,8 +350,15 @@ struct CaptureData {
     notion_block_id: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct SaveResult {
+    pub json_path: String,
+    pub image_path: Option<String>,
+}
+
+
 #[command]
-fn save_capture_text(image_path: String, text: String) -> Result<String, String> {
+fn save_capture_text(image_path: String, text: String) -> Result<SaveResult, String> {
     let old_path = PathBuf::from(&image_path);
     if !old_path.exists() {
         return Err("Pending capture image not found".to_string());
@@ -386,11 +393,15 @@ fn save_capture_text(image_path: String, text: String) -> Result<String, String>
     std::fs::write(&json_path, json_content)
         .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
 
-    Ok(json_path.to_string_lossy().into_owned())
+    Ok(SaveResult {
+        json_path: json_path.to_string_lossy().into_owned(),
+        image_path: Some(new_path.to_string_lossy().into_owned()),
+    })
 }
 
+
 #[command]
-fn save_text_only(project_dir: String, text: String) -> Result<String, String> {
+fn save_text_only(project_dir: String, text: String) -> Result<SaveResult, String> {
     let captures_dir = PathBuf::from(&project_dir).join(DIR_CAPTURES);
     if !captures_dir.exists() {
         return Err("Projects captures directory not found".to_string());
@@ -420,8 +431,12 @@ fn save_text_only(project_dir: String, text: String) -> Result<String, String> {
     std::fs::write(&json_path, json_content)
         .map_err(|e| format!("ファイル保存に失敗しました: {}", e))?;
         
-    Ok(json_path.to_string_lossy().into_owned())
+    Ok(SaveResult {
+        json_path: json_path.to_string_lossy().into_owned(),
+        image_path: None,
+    })
 }
+
 
 #[command]
 fn update_capture_text(json_path: String, new_text: String) -> Result<(), String> {

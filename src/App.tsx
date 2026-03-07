@@ -978,18 +978,21 @@ function CapturePreviewPopup() {
     if (!project) return;
     setIsSaving(true);
     try {
-      let savedJsonPath = "";
+      let savedResult: { json_path: string, image_path: string | null | undefined };
       if (isTextOnly) {
-        savedJsonPath = await invoke('save_text_only', {
+        savedResult = await invoke('save_text_only', {
           projectDir: project.dir_path,
           text: text
         });
       } else {
-        savedJsonPath = await invoke('save_capture_text', {
+        savedResult = await invoke('save_capture_text', {
           imagePath: imagePath,
           text: text
         });
       }
+
+      const savedJsonPath = savedResult.json_path;
+      const finalImagePath = savedResult.image_path;
 
       // Auto-post if enabled
       const discordAutoPost = localStorage.getItem('discordAutoPost') === 'true';
@@ -1004,7 +1007,7 @@ function CapturePreviewPopup() {
             const messageId: string = await invoke('post_to_discord', {
               webhookUrl,
               text: text,
-              imagePath: imagePath || '',
+              imagePath: finalImagePath || '',
               threadId: project.discord_thread_id || null
             });
 
@@ -1027,7 +1030,7 @@ function CapturePreviewPopup() {
               notionApiToken: notionToken,
               pageId: project.notion_page_id,
               text: text,
-              imagePath: imagePath || ''
+              imagePath: finalImagePath || ''
             });
 
             if (savedJsonPath) {
@@ -1045,6 +1048,7 @@ function CapturePreviewPopup() {
           console.log("Notion auto-post skipped: Missing token or pageId", { hasToken: !!notionToken, pageId: project.notion_page_id });
         }
       }
+
 
       setText('');
       await emit('preview-closed');
