@@ -33,6 +33,7 @@ export interface ProjectInfo {
   dir_path: string;
   discord_thread_id?: string;
   notion_page_id?: string;
+  discord_webhook_url?: string;
 }
 
 // ─── MAIN DOCK ───────────────────────────────────────────────────────────────
@@ -700,6 +701,7 @@ function ProjectMenuPopup() {
   const [projectText, setProjectText] = useState('');
   const [discordThreadId, setDiscordThreadId] = useState('');
   const [notionPageId, setNotionPageId] = useState('');
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
   const [isSavingText, setIsSavingText] = useState(false);
 
   const getProjectsRoot = async () => {
@@ -749,6 +751,7 @@ function ProjectMenuPopup() {
     setProjectText(p.text);
     setDiscordThreadId(p.discord_thread_id || '');
     setNotionPageId(p.notion_page_id || '');
+    setDiscordWebhookUrl(p.discord_webhook_url || '');
   };
 
   const activateProject = async (p: ProjectInfo) => {
@@ -780,7 +783,13 @@ function ProjectMenuPopup() {
     if (!selectedProject) return;
     setIsSavingText(true);
     try {
-      const updatedInfo = { ...selectedProject, text: projectText, discord_thread_id: discordThreadId, notion_page_id: notionPageId };
+      const updatedInfo = {
+        ...selectedProject,
+        text: projectText,
+        discord_thread_id: discordThreadId,
+        notion_page_id: notionPageId,
+        discord_webhook_url: discordWebhookUrl
+      };
       await invoke('update_project', {
         project: updatedInfo
       });
@@ -906,6 +915,18 @@ function ProjectMenuPopup() {
                       style={{ flex: 1, height: '30px', fontSize: '0.85rem' }}
                     />
                   </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                    <span style={{ fontSize: '0.8rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Discord Webhook:</span>
+                    <input
+                      type="text"
+                      className="project-input"
+                      value={discordWebhookUrl}
+                      onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+                      onBlur={handleUpdateText}
+                      placeholder="Optional (Overrides global)"
+                      style={{ flex: 1, height: '30px', fontSize: '0.85rem' }}
+                    />
+                  </div>
                 </div>
               </>
             ) : (
@@ -998,10 +1019,11 @@ function CapturePreviewPopup() {
       const discordAutoPost = localStorage.getItem('discordAutoPost') === 'true';
       const notionAutoPost = localStorage.getItem('notionAutoPost') === 'true';
 
-      const webhookUrl = localStorage.getItem('discordWebhookUrl');
+      const globalWebhookUrl = localStorage.getItem('discordWebhookUrl');
       const notionToken = localStorage.getItem('notionApiToken');
 
       if (discordAutoPost) {
+        const webhookUrl = project.discord_webhook_url || globalWebhookUrl;
         if (webhookUrl) {
           try {
             const messageId: string = await invoke('post_to_discord', {
@@ -1365,7 +1387,8 @@ function HistoryMenuPopup() {
     if (!projectRef.current) return;
     try {
       if (item.discord_posted && item.discord_message_id) {
-        const webhookUrl = localStorage.getItem('discordWebhookUrl');
+        const globalWebhookUrl = localStorage.getItem('discordWebhookUrl');
+        const webhookUrl = projectRef.current.discord_webhook_url || globalWebhookUrl;
         if (webhookUrl) {
           try {
             await invoke('delete_discord_message', {
@@ -1408,7 +1431,8 @@ function HistoryMenuPopup() {
     setIsSavingEdit(true);
     try {
       if (item.discord_posted && item.discord_message_id) {
-        const webhookUrl = localStorage.getItem('discordWebhookUrl');
+        const globalWebhookUrl = localStorage.getItem('discordWebhookUrl');
+        const webhookUrl = projectRef.current.discord_webhook_url || globalWebhookUrl;
         if (webhookUrl) {
           try {
             await invoke('edit_discord_message', {
@@ -1455,7 +1479,9 @@ function HistoryMenuPopup() {
   const handleBatchPost = async () => {
     if (!projectRef.current) return;
     const proj = projectRef.current;
-    const webhookUrl = localStorage.getItem('discordWebhookUrl');
+    const globalWebhookUrl = localStorage.getItem('discordWebhookUrl');
+    const webhookUrl = proj.discord_webhook_url || globalWebhookUrl;
+
     if (!webhookUrl) {
       alert(t('discordWebhookUrl'));
       return;

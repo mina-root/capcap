@@ -247,6 +247,8 @@ pub struct ProjectInfo {
     pub discord_thread_id: Option<String>,
     #[serde(default)]
     pub notion_page_id: Option<String>,
+    #[serde(default)]
+    pub discord_webhook_url: Option<String>,
 }
 
 #[command]
@@ -305,6 +307,7 @@ fn create_project(app_data_dir: String, name: String, text: String) -> Result<Pr
         dir_path: target_dir.to_string_lossy().into_owned(),
         discord_thread_id: None,
         notion_page_id: None,
+        discord_webhook_url: None,
     };
     
     // JSON保存
